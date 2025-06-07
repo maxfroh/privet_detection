@@ -4,4 +4,5 @@ This is the project for the UNT AI Summer Research Program project "Identificati
 
 ## Label Information
 0 - Chinese privet (L. sinense)
-1 - Yew (Taxum spp.)
+
+1 - Yew (Taxus spp.)
