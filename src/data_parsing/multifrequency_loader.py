@@ -2,6 +2,7 @@
 # Takes in raw images and creates a tensor containing all specified spectra and indices.
 #
 # Example usage:
+# python src/data_parsing/multifrequency_loader.py -dirs-in data/images/Llela1c
 #
 
 import argparse
@@ -141,16 +142,12 @@ def process_dir(directory: str):
     print(f"Processing {directory}")
     full_root, folder_name = os.path.split(directory)
     root, image_folder = os.path.split(full_root)
-    print(folder_name)
     ms_dir_name = os.path.join(root, "multispectral_tensors", folder_name)
-    if not os.path.isdir(ms_dir_name):
-        os.mkdir(ms_dir_name)
+    if not os.path.exists(ms_dir_name):
+        os.makedirs(ms_dir_name)
     files = [f for f in os.listdir(directory) if "_D." in f]
     for file in files:
-        print(file)
         arr = process_file(os.path.join(directory, file))
-        print(arr.shape)
-        print(arr.dtype)
         filename = os.path.join(ms_dir_name, file) + ".pt"
         torch.save(arr.contiguous(), filename)
 
@@ -187,7 +184,6 @@ def process_file(file: str | os.PathLike[str]) -> Tensor:
             img = Image.open(file)
             c_tensor = transform(img)
             c_tensor = c_tensor / torch.iinfo(torch.uint16).max
-            print(c_tensor.dtype)
             arr[channel, :, :] = c_tensor
             channel += 1
         except Exception as e:
@@ -222,6 +218,7 @@ def main():
     in_dirs = args.dirs_in
     for directory in in_dirs:
         process_dir(directory)
+        print(f"Processing {directory} completed.")
     print("Done.")
 
 
