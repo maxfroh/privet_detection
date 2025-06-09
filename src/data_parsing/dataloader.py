@@ -1,0 +1,125 @@
+#
+# Loads/creates a dataset from privet data
+#
+
+import os
+import pandas as pd
+
+import torch
+from torch import Tensor
+from torch.utils.data import Dataset
+from torchvision.io import decode_image
+from torchvision.tv_tensors import Image, BoundingBoxes, BoundingBoxFormat
+
+
+class PrivetDataset(Dataset):
+    """
+    A `Dataset` object for fetching field images and their bounding boxes.
+    """
+
+    def __init__(self, img_dir: str, labels_dir: str, is_multispectral: bool = False):
+        """
+        :param: img_dir: The directory containing all images/image subdirectories.
+        :param: labels_dir: The directory containing all labels/label subdirectories.
+        :param: is_multispectral: Whether or not the data is multispectral (i.e., a multichannel tensor) or "default" (RGB)
+        """
+        self.img_dir = img_dir
+        self.labels_dir = labels_dir
+        self.is_multispectral = is_multispectral
+        self.img_locs: dict[int, str] = {}
+        self.labels_locs: dict[int, str] = {}
+        self.classes: dict[int, str] = {}
+
+        idx = 0
+        for dirpath, dirnames, filenames in os.walk(img_dir):
+            if dirpath == img_dir:
+                continue
+            classes = {}
+            terminal_dir = os.path.split(dirpath)[1]
+            with open(os.path.join(labels_dir, terminal_dir, "classes.txt"), mode="r", encoding="utf-8") as class_file:
+                class_num = 0
+                for line in class_file:
+                    classes[class_num] = line
+            for filename in filenames:
+                self.img_locs[idx] = os.path.join(dirpath, filename)
+                if self.is_multispectral:
+                    extension = ".JPG.pt"
+                else:
+                    extension = ".JPG"
+                labels_filename = filename.replace(extension, ".txt")
+                self.labels_locs[idx] = os.path.join(
+                    labels_dir, terminal_dir, labels_filename)
+                self.classes[idx] = classes
+                idx += 1
+
+    def get_is_multispectral(self):
+        return self.is_multispectral
+
+    def __len__(self):
+        return len(self.img_locs)
+
+    def _calculate_coords(self, hi: int, wi: int, cx: float, cy: float, hb: float, wb: float) -> tuple[int, int, int, int]:
+        """
+        Get the coordinates of a bounding box from YOLO format.
+        :param: hi: the height of the image
+        :param: wi: the width of the image
+        :param: cx: the x-coordinate of the center of the bounding box
+        :param: cy: the y-coordinate of the center of the bounding box
+        :param: hb: the height of the bounding box
+        :param: wb: the width of the bounding box
+        """
+        x0 = int(wi * (cx - wb / 2))
+        x1 = int(wi * (cx + wb / 2))
+        y0 = int(hi * (cy - hb / 2))
+        y1 = int(hi * (cy - hb / 2))
+        return (x0, x1, y0, y1)
+
+    def __getitem__(self, idx) -> tuple[Image, dict]:
+        img_loc = self.img_locs[idx]
+        labels_loc = self.labels_locs[idx]
+
+        if self.is_multispectral:
+            image = torch.load(img_loc)
+        else:
+            image = decode_image(img_loc, mode="RGB")
+
+        # Get bounding boxes and labels
+        H = image.shape[1]
+        W = image.shape[2]
+        with open(labels_loc, mode="r", encoding="utf-8") as lf:
+            lines = lf.readlines()
+
+        N = len(lines)
+        labels = torch.zeros((N), dtype=torch.uint8)
+        boxes_tensor = torch.zeros((N, 4), dtype=torch.uint8)
+        areas = torch.zeros((N), dtype=torch.uint8)
+        for i in range(N):
+            label, cx, cy, wb, hb = map(float, lines[i].split())
+            labels[i] = int(label)
+            x0, x1, y0, y1 = self._calculate_coords(H, W, cx, cy, hb, wb)
+            boxes_tensor[i] = torch.tensor([x0, y0, x1, y1])
+            areas[i] = (x1 - x0) * (y1 - y0)
+        boxes = BoundingBoxes(
+            data=boxes_tensor, format=BoundingBoxFormat.XYXY, canvas_size=(H, W))
+
+        return (
+            image,
+            {
+                "boxes": boxes,
+                "labels": labels,
+                "image_id": idx,
+                "area": areas,
+                "iscrowd": torch.zeros((N)),
+            }
+        )
+
+
+# Testing
+
+def main():
+    data = PrivetDataset("data/images", "data/labels")
+    print(data[0])
+
+
+if __name__ == "__main__":
+    main()
