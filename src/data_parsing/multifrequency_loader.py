@@ -71,7 +71,7 @@ def SAVI(arr: Tensor, NIR_idx: int, R_idx: int, L: float = 0.5) -> float:
 
 def MSAVI2(arr: Tensor, NIR_idx: int, R_idx: int) -> float:
     """
-    Calculates the Soil Adjusted Vegetation Index (SAVI) using Near Infrared (NIR) and Red (R).
+    Calculates the Modified Soil Adjusted Vegetation Index (MSAVI2) using Near Infrared (NIR) and Red (R).
     L is a parameter that can be changed but is 0.5 by default.
     """
     NIR = arr[NIR_idx, :, :]

@@ -32,14 +32,24 @@ class PrivetDataset(Dataset):
 
         idx = 0
         for dirpath, dirnames, filenames in os.walk(img_dir):
+            # skip the img_dir folder itself
             if dirpath == img_dir:
-                continue
+                continue 
+            
             classes = {}
+            
+            # get the name of the folder containing the images (ex: Llela1c)
             terminal_dir = os.path.split(dirpath)[1]
+            
+            # get the class file for that set and extract the classes
             with open(os.path.join(labels_dir, terminal_dir, "classes.txt"), mode="r", encoding="utf-8") as class_file:
                 class_num = 0
                 for line in class_file:
-                    classes[class_num] = line
+                    class_name = self._convert_line_to_uniform_class(line)
+                    classes[class_num] = class_name
+                    class_num += 1
+            
+            # get the image/tensor representing the image
             for filename in filenames:
                 self.img_locs[idx] = os.path.join(dirpath, filename)
                 if self.is_multispectral:
@@ -51,6 +61,22 @@ class PrivetDataset(Dataset):
                     labels_dir, terminal_dir, labels_filename)
                 self.classes[idx] = classes
                 idx += 1
+
+    def _convert_line_to_uniform_class(self, line: str):
+        """
+        Converts a classname to one of three predetermined options, to make sure that
+        class labels are uniform across class files.
+        
+        TODO: This function should be removed once the dataset is finalized and made uniform.
+        """
+        s = line.lower()
+        if "privet" in s:
+            return "privet"
+        elif "yew" in s:
+            return "yew"
+        elif "path" in s:
+            return "path"
+        return "UNKNOWN"
 
     def get_is_multispectral(self):
         return self.is_multispectral
