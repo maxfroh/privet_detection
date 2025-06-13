@@ -55,6 +55,8 @@ class PrivetDataset(Dataset):
             
             # get the image/tensor representing the image
             for filename in filenames:
+                if ".TIF" in filename: 
+                    continue
                 self.img_locs[idx] = os.path.join(dirpath, filename)
                 if self.is_multispectral:
                     extension = ".JPG.pt"
@@ -88,7 +90,7 @@ class PrivetDataset(Dataset):
     def __len__(self):
         return len(self.img_locs)
 
-    def _calculate_coords(self, hi: int, wi: int, cx: float, cy: float, hb: float, wb: float) -> tuple[int, int, int, int]:
+    def _calculate_coords(self, hi: int, wi: int, cx: float, cy: float, hb: float, wb: float) -> tuple[float, float, float, float]:
         """
         Get the coordinates of a bounding box from YOLO format.
         :param: hi: the height of the image
@@ -98,11 +100,15 @@ class PrivetDataset(Dataset):
         :param: hb: the height of the bounding box
         :param: wb: the width of the bounding box
         """
-        x0 = int(wi * (cx - wb / 2))
-        x1 = int(wi * (cx + wb / 2))
-        y0 = int(hi * (cy - hb / 2))
-        y1 = int(hi * (cy - hb / 2))
-        return (x0, x1, y0, y1)
+        xmin = wi * (cx - wb / 2)
+        xmax = wi * (cx + wb / 2)
+        ymin = hi * (cy - hb / 2)
+        ymax = hi * (cy + hb / 2)
+        if xmin > xmax:
+            xmin, xmax = xmax, xmin
+        if ymin > ymax:
+            ymin, ymax = ymax, ymin
+        return (xmin, ymin, xmax, ymax)
 
     def __getitem__(self, idx) -> tuple[Image, dict]:
         img_loc = self.img_locs[idx]
@@ -111,7 +117,7 @@ class PrivetDataset(Dataset):
         if self.is_multispectral:
             image = torch.load(img_loc)
         else:
-            image = decode_image(img_loc, mode="RGB")
+            image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
         if self.transform:
             image = self.transform(image)
 
@@ -123,14 +129,14 @@ class PrivetDataset(Dataset):
 
         N = len(lines)
         labels = torch.zeros((N), dtype=torch.uint8)
-        boxes_tensor = torch.zeros((N, 4), dtype=torch.uint8)
-        areas = torch.zeros((N), dtype=torch.uint8)
+        boxes_tensor = torch.zeros((N, 4), dtype=torch.float16)
+        areas = torch.zeros((N), dtype=torch.uint32)
         for i in range(N):
             label, cx, cy, wb, hb = map(float, lines[i].split())
             labels[i] = int(label)
-            x0, x1, y0, y1 = self._calculate_coords(H, W, cx, cy, hb, wb)
-            boxes_tensor[i] = torch.tensor([x0, y0, x1, y1])
-            areas[i] = (x1 - x0) * (y1 - y0)
+            xmin, ymin, xmax, ymax = self._calculate_coords(H, W, cx, cy, hb, wb)
+            boxes_tensor[i] = torch.tensor([xmin, ymin, xmax, ymax])
+            areas[i] = int((xmax - xmin) * (ymax - ymin))
         boxes = BoundingBoxes(
             data=boxes_tensor, format=BoundingBoxFormat.XYXY, canvas_size=(H, W))
 

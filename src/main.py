@@ -9,10 +9,10 @@ import argparse
 import random
 import os
 import time
-import tqdm
 import numpy as np
 
 from os import PathLike
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import DataLoader
@@ -39,10 +39,10 @@ SCHEDULER_GAMMA = 0.1
 #  Setup  Functions  #
 ######################
 
-def get_model(model: str) -> torch.nn.Module:
+def get_model(model: str, num_channels: int) -> torch.nn.Module:
     match model:
         case "faster_rcnn":
-            return FasterRCNNResNet101()
+            return FasterRCNNResNet101(num_channels=num_channels)
 
 
 def get_transforms(train: bool = True):
@@ -128,7 +128,7 @@ def save_results(save_dir: str | PathLike, trained_results: dict, test_results: 
 #  Model  Functions  #
 ######################
 
-"""
+
 def train(model: torch.nn.Module, device, train_data: DataLoader, validation_data: DataLoader, num_epochs: int, batch_size: int, lr_scheduler: LRScheduler, save_dir: str | PathLike):
     model.train()
     train_results = {}
@@ -138,11 +138,13 @@ def train(model: torch.nn.Module, device, train_data: DataLoader, validation_dat
         print(f"Epoch {e}:")
         train_results[e] = {"train": [], "validate": []}
         for i, data in tqdm(train_data, total=len(train_data)):
+            print(type(data))
             images, targets = data
 
             images = list(image.to(device) for image in images)
             targets = [
                 {key: value.to(device) for key, value in target.items()} for target in targets]
+            
 
             with torch.no_grad():
                 loss_dict = model(images, targets)
@@ -219,13 +221,11 @@ def evaluate(model: torch.nn.Module, device, test_data: DataLoader):
         print(f"Loss: {loss_value:0.4f}")
 
     return test_results
-"""
 
-def train(model: torch.nn.Module, optimizer: Optimizer, scheduler: LRScheduler, data_loader, device, epoch, ):
-    train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=10)
-    scheduler.step()
-    # evaluate on the test dataset
-    evaluate(model, data_loader_test, device=device)
+
+def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: DataLoader, device, epoch):
+    result = train_one_epoch(model, optimizer, train_data_loader, device, epoch, print_freq=10)
+    return result
 
 ######################
 #   Main Functions   #
@@ -284,8 +284,11 @@ def main():
         for num_epochs in args.num_epochs:
             for learning_rate in args.learning_rate:
                 # set up model
-                model = get_model(args.model)
-                print(model)
+                num_channels = 3
+                if args.channels == "all":
+                    num_channels = 14
+                model = get_model(args.model, num_channels=num_channels)
+                # print(model)
                 model.to(device)
 
                 # set up data
@@ -315,7 +318,14 @@ def main():
                 # train
                 # trained_results = train(model=model, device=device, train_data=train_data,
                 #                         validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
-                trained_results = train()
+                
+                for e in range(num_epochs):
+                    trained_results = ref_train(model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
+                    print(trained_results)
+                    lr_scheduler.step()
+                    # evaluate on the test dataset
+                    evaluate(model, validation_data, device=device)
+                
                 print("Training complete!")
 
                 # test
