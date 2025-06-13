@@ -5,6 +5,8 @@
 import os
 import pandas as pd
 
+from typing import Callable
+
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -17,15 +19,17 @@ class PrivetDataset(Dataset):
     A `Dataset` object for fetching field images and their bounding boxes.
     """
 
-    def __init__(self, img_dir: str, labels_dir: str, is_multispectral: bool = False):
+    def __init__(self, img_dir: str, labels_dir: str, is_multispectral: bool = False, transform: Callable = None):
         """
         :param: img_dir: The directory containing all images/image subdirectories.
         :param: labels_dir: The directory containing all labels/label subdirectories.
         :param: is_multispectral: Whether or not the data is multispectral (i.e., a multichannel tensor) or "default" (RGB)
+        :param: transform (optional): Any transforms to apply to the data.
         """
         self.img_dir = img_dir
         self.labels_dir = labels_dir
         self.is_multispectral = is_multispectral
+        self.transform = transform
         self.img_locs: dict[int, str] = {}
         self.labels_locs: dict[int, str] = {}
         self.classes: dict[int, str] = {}
@@ -108,6 +112,8 @@ class PrivetDataset(Dataset):
             image = torch.load(img_loc)
         else:
             image = decode_image(img_loc, mode="RGB")
+        if self.transform:
+            image = self.transform(image)
 
         # Get bounding boxes and labels
         H = image.shape[1]
