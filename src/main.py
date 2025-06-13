@@ -133,18 +133,15 @@ def train(model: torch.nn.Module, device, train_data: DataLoader, validation_dat
     model.train()
     train_results = {}
 
-    for e in range(num_epochs):
+    for e in range(1, num_epochs + 1):
         start = time.time()
         print(f"Epoch {e}:")
         train_results[e] = {"train": [], "validate": []}
-        for i, data in tqdm(train_data, total=len(train_data)):
-            print(type(data))
-            images, targets = data
+        for images, targets in train_data:
 
-            images = list(image.to(device) for image in images)
+            images = [image.to(device) for image in images]
             targets = [
-                {key: value.to(device) for key, value in target.items()} for target in targets]
-            
+                {key: value.to(device) if torch.is_tensor(value) else value for key, value in target.items()} for target in targets]
 
             with torch.no_grad():
                 loss_dict = model(images, targets)
@@ -186,7 +183,7 @@ def validate(model: torch.nn.Module, device, e: int, validation_data: DataLoader
 
         images = list(image.to(device) for image in images)
         targets = [
-            {key: value.to(device) for key, value in target.items()} for target in targets]
+            {key: value.to(device) if torch.is_tensor(value) else value for key, value in target.items()} for target in targets]
 
         with torch.no_grad():
             loss_dict = model(images, targets)
@@ -316,15 +313,15 @@ def main():
                     dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size)
 
                 # train
-                # trained_results = train(model=model, device=device, train_data=train_data,
-                #                         validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
+                trained_results = train(model=model, device=device, train_data=train_data,
+                                        validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
                 
-                for e in range(num_epochs):
-                    trained_results = ref_train(model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
-                    print(trained_results)
-                    lr_scheduler.step()
-                    # evaluate on the test dataset
-                    evaluate(model, validation_data, device=device)
+                # for e in range(num_epochs):
+                #     trained_results = ref_train(model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
+                #     print(trained_results)
+                #     lr_scheduler.step()
+                #     # evaluate on the test dataset
+                #     evaluate(model, validation_data, device=device)
                 
                 print("Training complete!")
 
