@@ -9,6 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
+            "justMyCode": false,
             "console": "integratedTerminal",
             "args": [
                 "-m",
@@ -24,7 +25,9 @@
                 "--num_epochs",
                 "1",
                 "-lr",
-                "0.001"
+                "0.001",
+                "-bs",
+                "2"
             ]
         }
     ]

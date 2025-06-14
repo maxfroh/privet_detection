@@ -47,7 +47,7 @@ class PrivetDataset(Dataset):
             
             # get the class file for that set and extract the classes
             with open(os.path.join(labels_dir, terminal_dir, "classes.txt"), mode="r", encoding="utf-8") as class_file:
-                class_num = 0
+                class_num = 1
                 for line in class_file:
                     class_name = self._convert_line_to_uniform_class(line)
                     classes[class_num] = class_name
@@ -124,16 +124,19 @@ class PrivetDataset(Dataset):
         # Get bounding boxes and labels
         H = image.shape[1]
         W = image.shape[2]
-        with open(labels_loc, mode="r", encoding="utf-8") as lf:
-            lines = lf.readlines()
+        try:
+            with open(labels_loc, mode="r", encoding="utf-8") as lf:
+                lines = lf.readlines()
+        except:
+            lines = []
 
         N = len(lines)
-        labels = torch.zeros((N), dtype=torch.uint8)
+        labels = torch.zeros((N), dtype=torch.int64)
         boxes_tensor = torch.zeros((N, 4), dtype=torch.float16)
         areas = torch.zeros((N), dtype=torch.uint32)
         for i in range(N):
             label, cx, cy, wb, hb = map(float, lines[i].split())
-            labels[i] = int(label)
+            labels[i] = int(label) + 1
             xmin, ymin, xmax, ymax = self._calculate_coords(H, W, cx, cy, hb, wb)
             boxes_tensor[i] = torch.tensor([xmin, ymin, xmax, ymax])
             areas[i] = int((xmax - xmin) * (ymax - ymin))

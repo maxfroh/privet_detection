@@ -39,6 +39,7 @@ SCHEDULER_GAMMA = 0.1
 #  Setup  Functions  #
 ######################
 
+
 def get_model(model: str, num_channels: int) -> torch.nn.Module:
     match model:
         case "faster_rcnn":
@@ -103,11 +104,12 @@ def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int):
     return save_dir
 
 
-def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, scheduler: LRScheduler):
+def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, optimizer: Optimizer, scheduler: LRScheduler):
     torch.save(
         {
             "epoch": curr_epoch,
             "model_state_dict": model.state_dict(),
+            "optimizer": optimizer,
             "scheduler": scheduler.state_dict()
         },
         os.path.join(save_dir, "models",
@@ -115,7 +117,7 @@ def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int
     )
 
 
-def save_results(save_dir: str | PathLike, trained_results: dict, test_results: dict):
+def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict):
     """
     Output the results from training and testing to the specified directory.
     """
@@ -128,7 +130,7 @@ def save_results(save_dir: str | PathLike, trained_results: dict, test_results: 
 #  Model  Functions  #
 ######################
 
-
+"""
 def train(model: torch.nn.Module, device, train_data: DataLoader, validation_data: DataLoader, num_epochs: int, batch_size: int, lr_scheduler: LRScheduler, save_dir: str | PathLike):
     model.train()
     train_results = {}
@@ -148,7 +150,7 @@ def train(model: torch.nn.Module, device, train_data: DataLoader, validation_dat
 
             losses = sum(loss for loss in loss_dict.values())
             loss_value = losses.item()
-            print(losses)
+            # print(losses)
             train_results[e]["train"].append(loss_value)
 
             losses.backward()
@@ -218,15 +220,17 @@ def evaluate(model: torch.nn.Module, device, test_data: DataLoader):
         print(f"Loss: {loss_value:0.4f}")
 
     return test_results
-
+"""
 
 def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: DataLoader, device, epoch):
-    result = train_one_epoch(model, optimizer, train_data_loader, device, epoch, print_freq=10)
+    result = train_one_epoch(
+        model, optimizer, train_data_loader, device, epoch, print_freq=10)
     return result
 
 ######################
 #   Main Functions   #
 ######################
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -312,26 +316,31 @@ def main():
                 save_dir = get_save_dir(
                     dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size)
 
-                # train
-                trained_results = train(model=model, device=device, train_data=train_data,
-                                        validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
-                
-                # for e in range(num_epochs):
-                #     trained_results = ref_train(model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
-                #     print(trained_results)
-                #     lr_scheduler.step()
-                #     # evaluate on the test dataset
-                #     evaluate(model, validation_data, device=device)
-                
+                # # train
+                # trained_results = train(model=model, device=device, train_data=train_data,
+                #                         validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
+
+                trained_results = {}
+
+                for e in range(num_epochs):
+                    trained_results[e] = ref_train(
+                        model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
+                    print(trained_results[e])
+                    lr_scheduler.step()
+                    # evaluate on the test dataset
+                    evaluate(model, validation_data, device=device)
+                    save_model(model=model, save_dir=save_dir, batch_size=batch_size, epoch=e,
+                               learning_rate=learning_rate, optimizer=optimizer, scheduler=lr_scheduler)
+
                 print("Training complete!")
 
                 # test
-                # eval_results = evaluate(
-                #     model=model, device=device, test_data=test_data)
+                eval_results = evaluate(
+                    model=model, device=device, test_data=test_data)
 
                 # save results
-                # save_results(save_dir=save_dir,
-                #              trained_results=trained_results, eval_results=eval_results)
+                save_results(save_dir=save_dir,
+                             trained_results=trained_results, eval_results=eval_results)
 
 
 if __name__ == "__main__":
