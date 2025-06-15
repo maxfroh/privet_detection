@@ -34,6 +34,8 @@ class PrivetDataset(Dataset):
         self.labels_locs: dict[int, str] = {}
         self.classes: dict[int, str] = {}
 
+        self.info = {"name": "PrivetDataset", "img_dir": img_dir, "labels_dir": labels_dir, "is_ms": is_multispectral}
+
         idx = 0
         for dirpath, dirnames, filenames in os.walk(img_dir):
             # skip the img_dir folder itself

@@ -8,6 +8,7 @@
 import argparse
 import random
 import os
+import sys
 import time
 import numpy as np
 
@@ -98,13 +99,15 @@ def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int):
     if not os.path.exists(dir):
         os.makedirs(dir)
     cts = time.localtime()
-    name = f"{cts[0]}{cts[1]}{cts[2]}_{cts[3]}{cts[4]}{cts[5]}_e{num_epochs}_b{batch_size}"
+    name = f"{cts[0]:02d}{cts[1]:02d}{cts[2]:02d}_{cts[3]:02d}{cts[4]:02d}{cts[5]:02d}_e{num_epochs}_b{batch_size}"
     save_dir = os.path.join(dir, name)
     os.mkdir(save_dir)
     return save_dir
 
 
 def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, optimizer: Optimizer, scheduler: LRScheduler):
+    if not os.path.exists(os.path.join(save_dir, "models")):
+        os.mkdir(os.path.join(save_dir, "models"))
     torch.save(
         {
             "epoch": curr_epoch,
@@ -112,8 +115,7 @@ def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int
             "optimizer": optimizer,
             "scheduler": scheduler.state_dict()
         },
-        os.path.join(save_dir, "models",
-                     f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}.pt")
+        os.path.join(save_dir, "models", f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}.pt")
     )
 
 
@@ -124,6 +126,8 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
 
     with open(file=os.path.join(save_dir, "readme.txt"), mode="w", encoding="utf-8") as f:
         f.write("Test")
+    torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
+    torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
 
 
 ######################
@@ -281,6 +285,8 @@ def main():
     torch.random.manual_seed(RAND_SEED)
     torch.cuda.manual_seed_all(RAND_SEED)
 
+    original_sout = sys.stdout
+
     for batch_size in args.batch_size:
         for num_epochs in args.num_epochs:
             for learning_rate in args.learning_rate:
@@ -315,12 +321,16 @@ def main():
 
                 save_dir = get_save_dir(
                     dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size)
+                
+                f = open(os.path.join(save_dir, "output.txt"), "a")
+                sys.stdout = f
 
                 # # train
                 # trained_results = train(model=model, device=device, train_data=train_data,
                 #                         validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
 
                 trained_results = {}
+                eval_results = {}
 
                 for e in range(num_epochs):
                     trained_results[e] = ref_train(
@@ -328,19 +338,25 @@ def main():
                     print(trained_results[e])
                     lr_scheduler.step()
                     # evaluate on the test dataset
-                    evaluate(model, validation_data, device=device)
-                    save_model(model=model, save_dir=save_dir, batch_size=batch_size, epoch=e,
+                    eval_results[e] = evaluate(model, validation_data, device=device)
+                    print(eval_results[e])
+                    save_model(model=model, save_dir=save_dir, batch_size=batch_size, num_epochs=num_epochs, curr_epoch=e,
                                learning_rate=learning_rate, optimizer=optimizer, scheduler=lr_scheduler)
 
                 print("Training complete!")
 
                 # test
-                eval_results = evaluate(
-                    model=model, device=device, test_data=test_data)
+                eval_results[-1] = evaluate(model, test_data, device=device)
 
                 # save results
                 save_results(save_dir=save_dir,
-                             trained_results=trained_results, eval_results=eval_results)
+                             trained_results=trained_results, test_results=eval_results)
+                
+                f.close()
+                
+    sys.stdout = original_sout
+                
+                
 
 
 if __name__ == "__main__":
