@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import numpy as np
+import matplotlib.pyplot as plt
 
 from os import PathLike
 from tqdm import tqdm
@@ -20,10 +21,12 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
 from torchvision.transforms import v2 as T
+from torchvision.io import read_image
 from torchvision.utils import draw_bounding_boxes
 
 from models.fast_rcnn import FasterRCNNResNet101
 from data_parsing.dataloader import PrivetDataset
+from data_parsing.graph_maker import make_graphs
 from torch_references.utils import collate_fn
 from torch_references.engine import train_one_epoch, evaluate
 
@@ -54,6 +57,8 @@ def get_transforms(train: bool = True):
     transforms = []
     if train:
         transforms.append(T.RandomHorizontalFlip(p=0.5))
+    transforms.append(T.ToDtype(torch.float, scale=True))
+    transforms.append(T.ToPureTensor())
     return T.Compose(transforms=transforms)
 
 
@@ -95,11 +100,11 @@ def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str,
     return training_data, validation_data, testing_data
 
 
-def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int):
+def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning_rate: float):
     if not os.path.exists(dir):
         os.makedirs(dir)
     cts = time.localtime()
-    name = f"{cts[0]:02d}{cts[1]:02d}{cts[2]:02d}_{cts[3]:02d}{cts[4]:02d}{cts[5]:02d}_e{num_epochs}_b{batch_size}"
+    name = f"{cts[0]:02d}{cts[1]:02d}{cts[2]:02d}_{cts[3]:02d}{cts[4]:02d}{cts[5]:02d}_e{num_epochs}_b{batch_size}_lr{learning_rate}"
     save_dir = os.path.join(dir, name)
     os.mkdir(save_dir)
     return save_dir
@@ -285,8 +290,6 @@ def main():
     torch.random.manual_seed(RAND_SEED)
     torch.cuda.manual_seed_all(RAND_SEED)
 
-    original_sout = sys.stdout
-
     for batch_size in args.batch_size:
         for num_epochs in args.num_epochs:
             for learning_rate in args.learning_rate:
@@ -320,41 +323,62 @@ def main():
                 )
 
                 save_dir = get_save_dir(
-                    dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size)
+                    dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
                 
-                f = open(os.path.join(save_dir, "output.txt"), "a")
-                sys.stdout = f
-
-                # # train
-                # trained_results = train(model=model, device=device, train_data=train_data,
-                #                         validation_data=validation_data, num_epochs=num_epochs, batch_size=batch_size, lr_scheduler=lr_scheduler, save_dir=save_dir)
-
                 trained_results = {}
                 eval_results = {}
 
+                start_time = time.time()
+
                 for e in range(num_epochs):
+                    print(f"Epoch {e}/{num_epochs}")
                     trained_results[e] = ref_train(
                         model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
+                    print("training results:")
                     print(trained_results[e])
+                    print()
                     lr_scheduler.step()
                     # evaluate on the test dataset
                     eval_results[e] = evaluate(model, validation_data, device=device)
-                    print(eval_results[e])
                     save_model(model=model, save_dir=save_dir, batch_size=batch_size, num_epochs=num_epochs, curr_epoch=e,
-                               learning_rate=learning_rate, optimizer=optimizer, scheduler=lr_scheduler)
+                            learning_rate=learning_rate, optimizer=optimizer, scheduler=lr_scheduler)
 
-                print("Training complete!")
+                # image = read_image("C:/Users/mf0771/Documents/cut/images/Llela1c/DJI_20250310124707_0001_D.JPG")
+                # eval_transform = get_transforms(train=False)
+
+                # model.eval()
+                # with torch.no_grad():
+                #     x = eval_transform(image)
+                #     # convert RGBA -> RGB and move to device
+                #     x = x[:3, ...].to(device)
+                #     predictions = model([x, ])
+                #     pred = predictions[0]
+
+                # image = (255.0 * (image - image.min()) / (image.max() - image.min())).to(torch.uint8)
+                # image = image[:3, ...]
+                # pred_labels = [f"pedestrian: {score:.3f}" for label, score in zip(pred["labels"], pred["scores"])]
+                # pred_boxes = pred["boxes"].long()
+                # output_image = draw_bounding_boxes(image, pred_boxes, pred_labels, colors="red")
+
+                # plt.figure(figsize=(12, 12))
+                # plt.imshow(output_image.permute(1, 2, 0))
+
+                print("\n\nTraining complete!\n\n")
 
                 # test
                 eval_results[-1] = evaluate(model, test_data, device=device)
+                 
+                total_time = time.time() - start_time
+                print(f"Entire run took {total_time}s")
 
                 # save results
                 save_results(save_dir=save_dir,
-                             trained_results=trained_results, test_results=eval_results)
+                            trained_results=trained_results, test_results=eval_results)
                 
-                f.close()
+                make_graphs(save_dir=save_dir,
+                            trained_results=trained_results, test_results=eval_results)
                 
-    sys.stdout = original_sout
+                print("Complete!")
                 
                 
 
