@@ -88,6 +88,9 @@ class PrivetDataset(Dataset):
 
     def get_is_multispectral(self):
         return self.is_multispectral
+    
+    def get_class_name(self, label: int) -> str:
+        return self.classes[0][label]
 
     def __len__(self):
         return len(self.img_locs)

@@ -10,11 +10,13 @@ import random
 import os
 import sys
 import time
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 
 from os import PathLike
 from tqdm import tqdm
+from operator import itemgetter
 
 import torch
 from torch.utils.data import DataLoader
@@ -110,7 +112,15 @@ def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning
     return save_dir
 
 
-def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, optimizer: Optimizer, scheduler: LRScheduler):
+def get_model_name(num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float):
+    return f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}"
+
+def get_model_dir(save_dir: str | PathLike, model_name: str):
+    return os.path.join(save_dir, "models",
+                f"{model_name}.pt")
+
+
+def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str, curr_epoch: int, optimizer: Optimizer, scheduler: LRScheduler):
     if not os.path.exists(os.path.join(save_dir, "models")):
         os.mkdir(os.path.join(save_dir, "models"))
     torch.save(
@@ -120,24 +130,28 @@ def save_model(model: torch.nn.Module, save_dir: str | PathLike, num_epochs: int
             "optimizer": optimizer,
             "scheduler": scheduler.state_dict()
         },
-        os.path.join(save_dir, "models", f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}.pt")
+        get_model_dir(save_dir, model_name)
     )
 
+def remove_model(save_dir: str | PathLike, model_name: str):
+    os.remove(get_model_dir(save_dir, model_name)) 
 
-def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict):
+def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args):
     """
     Output the results from training and testing to the specified directory.
     """
-
     with open(file=os.path.join(save_dir, "readme.txt"), mode="w", encoding="utf-8") as f:
-        f.write("Test")
+        f.write("This model has been trained with the following parameters:\n")
+        for arg in vars(args):
+            line = f"\t{arg}: {getattr(args, arg)}\n"
+            f.write(line)
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
-
 
 ######################
 #  Model  Functions  #
 ######################
+
 
 """
 def train(model: torch.nn.Module, device, train_data: DataLoader, validation_data: DataLoader, num_epochs: int, batch_size: int, lr_scheduler: LRScheduler, save_dir: str | PathLike):
@@ -230,6 +244,10 @@ def evaluate(model: torch.nn.Module, device, test_data: DataLoader):
 
     return test_results
 """
+
+
+def get_class_name(label: torch.Tensor):
+    return {1: "privet", 2: "yew", 3: "path"}[label.item()]
 
 def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: DataLoader, device, epoch):
     result = train_one_epoch(
@@ -324,9 +342,10 @@ def main():
 
                 save_dir = get_save_dir(
                     dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
-                
+
                 trained_results = {}
                 eval_results = {}
+                top_5_mAPs: list[tuple[str, float]] = []
 
                 start_time = time.time()
 
@@ -334,53 +353,52 @@ def main():
                     print(f"Epoch {e}/{num_epochs}")
                     trained_results[e] = ref_train(
                         model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
-                    print("training results:")
-                    print(trained_results[e])
-                    print()
                     lr_scheduler.step()
-                    # evaluate on the test dataset
-                    eval_results[e] = evaluate(model, validation_data, device=device)
-                    save_model(model=model, save_dir=save_dir, batch_size=batch_size, num_epochs=num_epochs, curr_epoch=e,
-                            learning_rate=learning_rate, optimizer=optimizer, scheduler=lr_scheduler)
-
-                # image = read_image("C:/Users/mf0771/Documents/cut/images/Llela1c/DJI_20250310124707_0001_D.JPG")
-                # eval_transform = get_transforms(train=False)
-
-                # model.eval()
-                # with torch.no_grad():
-                #     x = eval_transform(image)
-                #     # convert RGBA -> RGB and move to device
-                #     x = x[:3, ...].to(device)
-                #     predictions = model([x, ])
-                #     pred = predictions[0]
-
-                # image = (255.0 * (image - image.min()) / (image.max() - image.min())).to(torch.uint8)
-                # image = image[:3, ...]
-                # pred_labels = [f"pedestrian: {score:.3f}" for label, score in zip(pred["labels"], pred["scores"])]
-                # pred_boxes = pred["boxes"].long()
-                # output_image = draw_bounding_boxes(image, pred_boxes, pred_labels, colors="red")
-
-                # plt.figure(figsize=(12, 12))
-                # plt.imshow(output_image.permute(1, 2, 0))
-
+                    
+                    # evaluate on the validation dataset
+                    validation_result = evaluate(
+                        model, validation_data, device=device)
+                    eval_results[e] = validation_result
+                    
+                    mAP = validation_result.coco_eval['bbox'].stats[1]
+                    
+                    # save results
+                    save_results(save_dir=save_dir,
+                        trained_results=trained_results, test_results=eval_results, args=args)
+                    
+                    # save model if in top 5
+                    model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=e, learning_rate=learning_rate)
+                    if len(top_5_mAPs) < 5:
+                        save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
+                               optimizer=optimizer, scheduler=lr_scheduler) 
+                        top_5_mAPs.append((model_name, mAP))
+                        top_5_mAPs = sorted(top_5_mAPs, key=itemgetter(1), reverse=True)
+                    elif mAP > top_5_mAPs[-1][1]:
+                        for i in range(len(top_5_mAPs)):
+                            if mAP > top_5_mAPs[i][1]:
+                                top_5_mAPs.insert(i, (model_name, mAP))
+                                break
+                        name_to_delete = top_5_mAPs[-1][0]
+                        try:
+                            os.remove(get_model_dir(save_dir, name_to_delete))
+                        except:
+                            continue
+                        save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
+                               optimizer=optimizer, scheduler=lr_scheduler) 
+                        top_5_mAPs = top_5_mAPs[:-1]
+                    
                 print("\n\nTraining complete!\n\n")
 
                 # test
                 eval_results[-1] = evaluate(model, test_data, device=device)
-                 
+
                 total_time = time.time() - start_time
                 print(f"Entire run took {total_time}s")
 
-                # save results
-                save_results(save_dir=save_dir,
-                            trained_results=trained_results, test_results=eval_results)
-                
-                make_graphs(save_dir=save_dir,
-                            trained_results=trained_results, test_results=eval_results)
+                # make_graphs(save_dir=save_dir,
+                #             trained_results=trained_results, test_results=eval_results)
                 
                 print("Complete!")
-                
-                
 
 
 if __name__ == "__main__":

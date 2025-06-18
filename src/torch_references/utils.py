@@ -123,11 +123,17 @@ class MetricLogger:
             self.meters[k].update(v)
 
     def __getattr__(self, attr):
-        if attr in self.meters:
-            return self.meters[attr]
+        meters = self.__dict__.get("meters")
+        if meters is not None and attr in meters:
+            return meters[attr]
         if attr in self.__dict__:
             return self.__dict__[attr]
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{attr}'")
+    
+    def __setstate__(self, d):
+        self.__dict__.update(d)
+        if "meters" not in self.__dict__:
+            self.__dict__["meters"] = defaultdict(SmoothedValue)
 
     def __str__(self):
         loss_str = []
