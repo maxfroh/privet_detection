@@ -391,6 +391,8 @@ def main():
 
                 # test
                 eval_results[-1] = evaluate(model, test_data, device=device)
+                save_results(save_dir=save_dir,
+                        trained_results=trained_results, test_results=eval_results, args=args)
 
                 total_time = time.time() - start_time
                 print(f"Entire run took {total_time}s")

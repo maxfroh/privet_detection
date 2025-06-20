@@ -15,7 +15,7 @@ from torchvision.ops import MultiScaleRoIAlign
 from torchvision.models.detection.faster_rcnn import FasterRCNN, FastRCNNPredictor
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.transform import GeneralizedRCNNTransform
-from torchvision.models.resnet import ResNet, resnet18, resnet34, resnet50, resnet101, resnet152
+from torchvision.models.resnet import ResNet, resnet18, resnet34, resnet50, resnet101, resnet152, ResNet18_Weights, ResNet34_Weights, ResNet50_Weights, ResNet101_Weights, ResNet152_Weights
 from torchvision.models._utils import IntermediateLayerGetter
 from torch.utils.data import DataLoader
 
@@ -27,13 +27,25 @@ out_channels = {
     resnet152: 2048
 }
 
+weights_dict = {
+    resnet18: ResNet18_Weights,
+    resnet34: ResNet34_Weights,
+    resnet50: ResNet50_Weights,
+    resnet101: ResNet101_Weights,
+    resnet152: ResNet152_Weights  
+}
 
-def FasterRCNNResNet101(classes: list[str] = ["privet", "yew", "path", "background"], backbone_model: Callable[..., ResNet] = resnet101, num_channels: int = 3):
+
+def FasterRCNNResNet101(classes: list[str] = ["background", "privet", "yew"], backbone_model: Callable[..., ResNet] = resnet101, num_channels: int = 3, include_weights: bool = True):
     """
     """
     num_classes = len(classes)
     
-    resnet = backbone_model(weights=None)
+    weights = None
+    if include_weights:
+        weights = weights_dict[backbone_model].DEFAULT
+        
+    resnet = backbone_model(weights=weights)
 
     # replacing roi head predictor
     # in_features = model.roi_heads.box_predictor.cls_score.in_features

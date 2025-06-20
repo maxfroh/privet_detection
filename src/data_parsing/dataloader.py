@@ -82,8 +82,6 @@ class PrivetDataset(Dataset):
             return "privet"
         elif "yew" in s:
             return "yew"
-        elif "path" in s:
-            return "path"
         return "UNKNOWN"
 
     def get_is_multispectral(self):
