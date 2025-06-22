@@ -47,10 +47,6 @@ def FasterRCNNResNet101(classes: list[str] = ["background", "privet", "yew"], ba
         
     resnet = backbone_model(weights=weights)
 
-    # replacing roi head predictor
-    # in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
     # multichannel weights
     if num_channels != 3:
         old_resnet_conv1_weights = resnet.conv1.weight
@@ -78,6 +74,10 @@ def FasterRCNNResNet101(classes: list[str] = ["background", "privet", "yew"], ba
 
     model = FasterRCNN(backbone=backbone, num_classes=num_classes, rpn_anchor_generator=anchor_generator,
                       box_roi_pool=roi_pooler)
+    
+    # replacing roi head predictor
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     
     # multichannel transform
     if num_channels != 3:

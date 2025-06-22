@@ -5,29 +5,54 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File with Arguments",
+            "name": "Python Debugger: main.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "../privet_detection/src/main.py",
             "justMyCode": false,
             "console": "integratedTerminal",
+            "env": {
+                "CUDA_LAUNCH_BLOCKING": "1"
+            },
             "args": [
                 "-m",
                 "faster_rcnn",
                 "--img_dir",
-                "C:/Users/mf0771/Documents/cut/images",
+                "IMG_DIR",
                 "--labels_dir",
-                "C:/Users/mf0771/Documents/cut/labels",
+                "LABELS_DIR",
                 "--results_dir",
-                "D:/Training/results/cut",
+                "RESULTS_DIR",
                 "--channels",
                 "rgb",
                 "--num_epochs",
-                "1",
+                "100",
                 "-lr",
-                "0.001",
+                "0.01",
                 "-bs",
-                "2"
+                "2",
+                "--scheduler_step_size",
+                "30",
+                "--scheduler_gamma",
+                "0.1"
+            ]
+        },
+        {
+            "name": "Python Debugger: graph_maker",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "../privet_detection/src/data_parsing/graph_maker.py",
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "args": [
+                "--img_dir",
+                "IMG_DIR",
+                "--labels_dir",
+                "LABEL_DIR",
+                "--save_dir",
+                "SAVE_DIR",
+                "--channels",
+                "rgb"
             ]
         }
     ]

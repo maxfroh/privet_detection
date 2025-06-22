@@ -45,6 +45,12 @@ SCHEDULER_GAMMA = 0.1
 #  Setup  Functions  #
 ######################
 
+def set_seeds():
+    random.seed(RAND_SEED)
+    np.random.seed(RAND_SEED)
+    torch.random.manual_seed(RAND_SEED)
+    torch.cuda.manual_seed_all(RAND_SEED)
+
 
 def get_model(model: str, num_channels: int) -> torch.nn.Module:
     match model:
@@ -70,7 +76,7 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str, batch_size: int = BATCH_SIZE) -> tuple[PrivetDataset, PrivetDataset, PrivetDataset]:
+def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str, batch_size: int = BATCH_SIZE) -> tuple[DataLoader, DataLoader, DataLoader]:
     is_multispectral = True if channels == "all" else False
 
     g = torch.Generator()
@@ -83,15 +89,24 @@ def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str,
     testing_data = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
                                  is_multispectral=is_multispectral)
 
+
+    # idxs = torch.randperm(len(training_data)).tolist()
+    # one_percent = len(idxs) // 100
+    # training_data = torch.utils.data.Subset(
+    #     training_data, idxs[:one_percent*10])
+    # validation_data = torch.utils.data.Subset(
+    #     validation_data, idxs[one_percent*10:one_percent * 15])
+    # testing_data = torch.utils.data.Subset(testing_data, idxs[one_percent*15:one_percent*20])
+
+
     # 80/10/10 split for data
     idxs = torch.randperm(len(training_data)).tolist()
     one_tenth = len(training_data) // 10
-    eight_tenths = len(training_data) - (2 * one_tenth)
     training_data = torch.utils.data.Subset(
-        training_data, idxs[:-eight_tenths])
+        training_data, idxs[:one_tenth * 8])
     validation_data = torch.utils.data.Subset(
-        validation_data, idxs[eight_tenths:(eight_tenths + one_tenth)])
-    testing_data = torch.utils.data.Subset(testing_data, idxs[-one_tenth:])
+        validation_data, idxs[one_tenth * 8:one_tenth * 9])
+    testing_data = torch.utils.data.Subset(testing_data, idxs[one_tenth * 9:])
 
     training_data = DataLoader(
         dataset=training_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
@@ -120,7 +135,7 @@ def get_model_dir(save_dir: str | PathLike, model_name: str):
                 f"{model_name}.pt")
 
 
-def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str, curr_epoch: int, optimizer: Optimizer, scheduler: LRScheduler):
+def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str, curr_epoch: int, optimizer: Optimizer, scheduler: LRScheduler, top_5_mAPs: list[tuple[str, float]]):
     if not os.path.exists(os.path.join(save_dir, "models")):
         os.mkdir(os.path.join(save_dir, "models"))
     torch.save(
@@ -128,7 +143,8 @@ def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str
             "epoch": curr_epoch,
             "model_state_dict": model.state_dict(),
             "optimizer": optimizer,
-            "scheduler": scheduler.state_dict()
+            "scheduler": scheduler.state_dict(),
+            "top_5_mAPs": top_5_mAPs,
         },
         get_model_dir(save_dir, model_name)
     )
@@ -136,7 +152,7 @@ def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str
 def remove_model(save_dir: str | PathLike, model_name: str):
     os.remove(get_model_dir(save_dir, model_name)) 
 
-def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args):
+def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args, *, dataloaders: dict[str, DataLoader] = None, best_models: list[tuple[str, float]]= None):
     """
     Output the results from training and testing to the specified directory.
     """
@@ -145,106 +161,19 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
         for arg in vars(args):
             line = f"\t{arg}: {getattr(args, arg)}\n"
             f.write(line)
+        if dataloaders:
+            for name, dataloader in dataloaders.items():
+                f.write(f"{name} size: {len(dataloader)}\n") 
+        if best_models:
+            f.write("Best models:")
+            for item in best_models:
+                f.write(f"\t- Model: {item[0]} | mAP@0.5: {item[1]}")
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
 
 ######################
 #  Model  Functions  #
 ######################
-
-
-"""
-def train(model: torch.nn.Module, device, train_data: DataLoader, validation_data: DataLoader, num_epochs: int, batch_size: int, lr_scheduler: LRScheduler, save_dir: str | PathLike):
-    model.train()
-    train_results = {}
-
-    for e in range(1, num_epochs + 1):
-        start = time.time()
-        print(f"Epoch {e}:")
-        train_results[e] = {"train": [], "validate": []}
-        for images, targets in train_data:
-
-            images = [image.to(device) for image in images]
-            targets = [
-                {key: value.to(device) if torch.is_tensor(value) else value for key, value in target.items()} for target in targets]
-
-            with torch.no_grad():
-                loss_dict = model(images, targets)
-
-            losses = sum(loss for loss in loss_dict.values())
-            loss_value = losses.item()
-            # print(losses)
-            train_results[e]["train"].append(loss_value)
-
-            losses.backward()
-
-            lr_scheduler.step()
-            print(f"Loss: {loss_value:0.4f}")
-
-        validate(model, device, e, validation_data, train_results)
-
-        end = time.time()
-
-        print(
-            f"Epoch {e}/{num_epochs} trained in {((end - start) / 60):.3f} minutes")
-
-        avg_train_loss = sum(
-            train_results[e]["train"]) / len(train_results[e]["train"])
-        avg_val_loss = sum(
-            train_results[e]["validate"]) / len(train_results[e]["validate"])
-        print(f"\tTraining Loss: {avg_train_loss:.3f}")
-        print(f"\tValidation Loss: {avg_val_loss:.3f}")
-
-        save_model(save_dir, model, e, num_epochs, batch_size, lr_scheduler)
-
-        print("\n" + ("-" * 20) + "\n")
-
-    return train_results
-
-
-def validate(model: torch.nn.Module, device, e: int, validation_data: DataLoader, train_results: dict[int, dict[str, list[float]]]):
-    for i, data in tqdm(validation_data, total=len(validation_data)):
-        images, targets = data
-
-        images = list(image.to(device) for image in images)
-        targets = [
-            {key: value.to(device) if torch.is_tensor(value) else value for key, value in target.items()} for target in targets]
-
-        with torch.no_grad():
-            loss_dict = model(images, targets)
-
-        losses = sum(loss for loss in loss_dict.values())
-        loss_value = losses.item()
-        print(losses)
-        train_results[e]["validate"].append(loss_value)
-
-        print(f"Loss: {loss_value:0.4f}")
-
-
-def evaluate(model: torch.nn.Module, device, test_data: DataLoader):
-    model.eval()
-    test_results = {""}
-
-    for i, data in tqdm(test_data, total=len(test_data)):
-        images, targets = data
-
-        images = list(image.to(device) for image in images)
-        targets = [
-            {key: value.to(device) for key, value in target.items()} for target in targets]
-
-        with torch.no_grad():
-            loss_dict = model(images, targets)
-
-        losses = sum(loss for loss in loss_dict.values())
-        loss_value = losses.item()
-        print(losses)
-        test_results.append(loss_value)
-
-        print(f"Loss: {loss_value:0.4f}")
-
-    return test_results
-"""
-
 
 def get_class_name(label: torch.Tensor):
     return {1: "privet", 2: "yew", 3: "path"}[label.item()]
@@ -303,10 +232,7 @@ def main():
         if torch.accelerator.is_available() else "cpu"
     print(f"Using {device} device")
 
-    random.seed(RAND_SEED)
-    np.random.seed(RAND_SEED)
-    torch.random.manual_seed(RAND_SEED)
-    torch.cuda.manual_seed_all(RAND_SEED)
+    set_seeds()
 
     for batch_size in args.batch_size:
         for num_epochs in args.num_epochs:
@@ -370,7 +296,7 @@ def main():
                     model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=e, learning_rate=learning_rate)
                     if len(top_5_mAPs) < 5:
                         save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
-                               optimizer=optimizer, scheduler=lr_scheduler) 
+                               optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
                         top_5_mAPs.append((model_name, mAP))
                         top_5_mAPs = sorted(top_5_mAPs, key=itemgetter(1), reverse=True)
                     elif mAP > top_5_mAPs[-1][1]:
@@ -384,7 +310,7 @@ def main():
                         except:
                             continue
                         save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
-                               optimizer=optimizer, scheduler=lr_scheduler) 
+                               optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
                         top_5_mAPs = top_5_mAPs[:-1]
                     
                 print("\n\nTraining complete!\n\n")
@@ -392,15 +318,16 @@ def main():
                 # test
                 eval_results[-1] = evaluate(model, test_data, device=device)
                 save_results(save_dir=save_dir,
-                        trained_results=trained_results, test_results=eval_results, args=args)
+                        trained_results=trained_results, test_results=eval_results, args=args, dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, best_models=top_5_mAPs)
 
                 total_time = time.time() - start_time
                 print(f"Entire run took {total_time}s")
 
-                # make_graphs(save_dir=save_dir,
-                #             trained_results=trained_results, test_results=eval_results)
+                make_graphs(save_dir=save_dir,
+                            trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
                 
                 print("Complete!")
+
 
 
 if __name__ == "__main__":
