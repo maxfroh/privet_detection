@@ -17,18 +17,17 @@ import matplotlib.pyplot as plt
 from os import PathLike
 from tqdm import tqdm
 from operator import itemgetter
+from sklearn.model_selection import KFold
 
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
 from torchvision.transforms import v2 as T
-from torchvision.io import read_image
-from torchvision.utils import draw_bounding_boxes
 
 from models.fast_rcnn import FasterRCNNResNet101
 from data_parsing.dataloader import PrivetDataset
-from data_parsing.graph_maker import make_graphs
+from data_parsing.graph_maker import make_graphs_and_vis
 from torch_references.utils import collate_fn
 from torch_references.engine import train_one_epoch, evaluate
 
@@ -76,45 +75,57 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str, batch_size: int = BATCH_SIZE) -> tuple[DataLoader, DataLoader, DataLoader]:
+def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str, batch_size: int = BATCH_SIZE, num_folds: int=1) -> dict[int, tuple[DataLoader, DataLoader, DataLoader]]:
     is_multispectral = True if channels == "all" else False
 
     g = torch.Generator()
     g.manual_seed(RAND_SEED)
 
-    training_data = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
-                                  is_multispectral=is_multispectral, transform=get_transforms())
-    validation_data = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
-                                    is_multispectral=is_multispectral)
-    testing_data = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
-                                 is_multispectral=is_multispectral)
+    dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
+                                  is_multispectral=is_multispectral)
+    
+    train_transform = get_transforms(False)
+    test_transform = get_transforms(True)
 
+    dls: dict[int, tuple[DataLoader, DataLoader, DataLoader]] = {}
 
-    # idxs = torch.randperm(len(training_data)).tolist()
-    # one_percent = len(idxs) // 100
-    # training_data = torch.utils.data.Subset(
-    #     training_data, idxs[:one_percent*10])
-    # validation_data = torch.utils.data.Subset(
-    #     validation_data, idxs[one_percent*10:one_percent * 15])
-    # testing_data = torch.utils.data.Subset(testing_data, idxs[one_percent*15:one_percent*20])
+    if num_folds > 1:
+        fold = KFold(n_splits=num_folds, shuffle=True, random_state=RAND_SEED)
 
+        splits = fold.split(training_data)
+        for fold, (train, test) in enumerate(splits):
+            print(fold)
+            print(len(train), len(test))
+            val_idxs = [test[i] for i in range(0, len(test), 2)]
+            test_idxs = [test[i] for i in range(1, len(test), 2)]
+            print(len(train), len(test_idxs), len(val_idxs))
+            training_data = torch.utils.data.Subset(dataset, train)
+            validation_data = torch.utils.data.Subset(dataset, )
+            dls[fold] = None
 
-    # 80/10/10 split for data
-    idxs = torch.randperm(len(training_data)).tolist()
-    one_tenth = len(training_data) // 10
-    training_data = torch.utils.data.Subset(
-        training_data, idxs[:one_tenth * 8])
-    validation_data = torch.utils.data.Subset(
-        validation_data, idxs[one_tenth * 8:one_tenth * 9])
-    testing_data = torch.utils.data.Subset(testing_data, idxs[one_tenth * 9:])
+    else:
+        # 80/10/10 split for data
+        idxs = torch.randperm(len(dataset)).tolist()
+        one_tenth = len(dataset) // 10
+        training_data = torch.utils.data.Subset(
+            dataset, idxs[:one_tenth * 8])
+        training_data.dataset.transform = train_transform
+        validation_data = torch.utils.data.Subset(
+            dataset, idxs[one_tenth * 8:one_tenth * 9])
+        validation_data.dataset.transform = test_transform
+        testing_data = torch.utils.data.Subset(dataset, idxs[one_tenth * 9:])
+        testing_data.dataset.transform = test_transform
 
-    training_data = DataLoader(
-        dataset=training_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-    validation_data = DataLoader(
-        dataset=validation_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    testing_data = DataLoader(
-        dataset=testing_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    return training_data, validation_data, testing_data
+        training_data = DataLoader(
+            dataset=training_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        validation_data = DataLoader(
+            dataset=validation_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+        testing_data = DataLoader(
+            dataset=testing_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+        
+        dls[0] = (training_data, validation_data, testing_data)
+    
+    return dls 
 
 
 def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning_rate: float):
@@ -127,8 +138,8 @@ def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning
     return save_dir
 
 
-def get_model_name(num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float):
-    return f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}"
+def get_model_name(num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, fold: int):
+    return f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}_f{fold}"
 
 def get_model_dir(save_dir: str | PathLike, model_name: str):
     return os.path.join(save_dir, "models",
@@ -217,6 +228,7 @@ def parse_args():
                         default=OPTIM_MOMENTUM, help="Optimizer momentum")
     parser.add_argument("--optimizer_weight_decay", type=float,
                         default=OPTIM_WEIGHT_DECAY, help="Optimizer weight decay")
+    parser.add_argument("--fivefold", type=bool, default=False)
 
     args = parser.parse_args()
 
@@ -234,6 +246,8 @@ def main():
 
     set_seeds()
 
+    num_folds = 5 if args.fivefold else 1
+
     for batch_size in args.batch_size:
         for num_epochs in args.num_epochs:
             for learning_rate in args.learning_rate:
@@ -247,84 +261,86 @@ def main():
 
                 # set up data
                 batch_size = batch_size
-                train_data, validation_data, test_data = get_data(
-                    img_dir=args.img_dir, labels_dir=args.labels_dir, channels=args.channels, batch_size=batch_size)
+                dataloaders = get_data(
+                    img_dir=args.img_dir, labels_dir=args.labels_dir, channels=args.channels, batch_size=batch_size, num_folds=num_folds)
+                for fold, (train_data, validation_data, test_data) in enumerate(dataloaders.values()):
+                    print(f"Starting Fold {fold}")
 
-                # construct an optimizer
-                params = [p for p in model.parameters() if p.requires_grad]
-                optimizer = SGD(
-                    params,
-                    lr=learning_rate,
-                    momentum=args.optimizer_momentum,
-                    weight_decay=args.optimizer_weight_decay
-                )
+                    # construct an optimizer
+                    params = [p for p in model.parameters() if p.requires_grad]
+                    optimizer = SGD(
+                        params,
+                        lr=learning_rate,
+                        momentum=args.optimizer_momentum,
+                        weight_decay=args.optimizer_weight_decay
+                    )
 
-                # and a learning rate scheduler
-                lr_scheduler = StepLR(
-                    optimizer,
-                    step_size=args.scheduler_step_size,
-                    gamma=args.scheduler_gamma
-                )
+                    # and a learning rate scheduler
+                    lr_scheduler = StepLR(
+                        optimizer,
+                        step_size=args.scheduler_step_size,
+                        gamma=args.scheduler_gamma
+                    )
 
-                save_dir = get_save_dir(
-                    dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
+                    save_dir = get_save_dir(
+                        dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
 
-                trained_results = {}
-                eval_results = {}
-                top_5_mAPs: list[tuple[str, float]] = []
+                    trained_results = {}
+                    eval_results = {}
+                    top_5_mAPs: list[tuple[str, float]] = []
 
-                start_time = time.time()
+                    start_time = time.time()
 
-                for e in range(num_epochs):
-                    print(f"Epoch {e}/{num_epochs}")
-                    trained_results[e] = ref_train(
-                        model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
-                    lr_scheduler.step()
-                    
-                    # evaluate on the validation dataset
-                    validation_result = evaluate(
-                        model, validation_data, device=device)
-                    eval_results[e] = validation_result
-                    
-                    mAP = validation_result.coco_eval['bbox'].stats[1]
-                    
-                    # save results
+                    for e in range(num_epochs):
+                        print(f"Epoch {e}/{num_epochs}")
+                        trained_results[e] = ref_train(
+                            model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
+                        lr_scheduler.step()
+                        
+                        # evaluate on the validation dataset
+                        validation_result = evaluate(
+                            model, validation_data, device=device)
+                        eval_results[e] = validation_result
+                        
+                        mAP = validation_result.coco_eval['bbox'].stats[1]
+                        
+                        # save results
+                        save_results(save_dir=save_dir,
+                            trained_results=trained_results, test_results=eval_results, args=args)
+                        
+                        # save model if in top 5
+                        model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=e, learning_rate=learning_rate, fold)
+                        if len(top_5_mAPs) < 5:
+                            save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
+                                optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
+                            top_5_mAPs.append((model_name, mAP))
+                            top_5_mAPs = sorted(top_5_mAPs, key=itemgetter(1), reverse=True)
+                        elif mAP > top_5_mAPs[-1][1]:
+                            for i in range(len(top_5_mAPs)):
+                                if mAP > top_5_mAPs[i][1]:
+                                    top_5_mAPs.insert(i, (model_name, mAP))
+                                    break
+                            name_to_delete = top_5_mAPs[-1][0]
+                            try:
+                                os.remove(get_model_dir(save_dir, name_to_delete))
+                            except:
+                                continue
+                            save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
+                                optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
+                            top_5_mAPs = top_5_mAPs[:-1]
+                        
+                    print("\n\nTraining complete!\n\n")
+
+                    # test
+                    eval_results[-1] = evaluate(model, test_data, device=device)
                     save_results(save_dir=save_dir,
-                        trained_results=trained_results, test_results=eval_results, args=args)
-                    
-                    # save model if in top 5
-                    model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=e, learning_rate=learning_rate)
-                    if len(top_5_mAPs) < 5:
-                        save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
-                               optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
-                        top_5_mAPs.append((model_name, mAP))
-                        top_5_mAPs = sorted(top_5_mAPs, key=itemgetter(1), reverse=True)
-                    elif mAP > top_5_mAPs[-1][1]:
-                        for i in range(len(top_5_mAPs)):
-                            if mAP > top_5_mAPs[i][1]:
-                                top_5_mAPs.insert(i, (model_name, mAP))
-                                break
-                        name_to_delete = top_5_mAPs[-1][0]
-                        try:
-                            os.remove(get_model_dir(save_dir, name_to_delete))
-                        except:
-                            continue
-                        save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
-                               optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
-                        top_5_mAPs = top_5_mAPs[:-1]
-                    
-                print("\n\nTraining complete!\n\n")
+                            trained_results=trained_results, test_results=eval_results, args=args, dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, best_models=top_5_mAPs)
 
-                # test
-                eval_results[-1] = evaluate(model, test_data, device=device)
-                save_results(save_dir=save_dir,
-                        trained_results=trained_results, test_results=eval_results, args=args, dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, best_models=top_5_mAPs)
+                    total_time = time.time() - start_time
+                    print(f"Entire run took {total_time}s")
 
-                total_time = time.time() - start_time
-                print(f"Entire run took {total_time}s")
-
-                make_graphs(save_dir=save_dir,
-                            trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
+                    make_graphs_and_vis(save_dir=save_dir,
+                                trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
                 
                 print("Complete!")
 

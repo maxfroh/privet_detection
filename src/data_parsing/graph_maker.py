@@ -140,7 +140,7 @@ def visualize(save_dir: str | PathLike, best_models: list[tuple[str, float]], te
     plt.figure(figsize=(12, 12))
     plt.imshow(output_image.permute(1, 2, 0))
     # plt.show()
-    plt.imsave(os.path.join(save_dir, "figures", "image2.png"), output_image.permute(1, 2, 0), dpi=300)
+    plt.imsave(os.path.join(save_dir, "image2.png"), output_image.permute(1, 2, 0), dpi=300)
 
 
 def make_lr(save_dir: str | PathLike, trained_results: dict[int, MetricLogger]):
@@ -299,9 +299,6 @@ def load_results_data(save_dir: str | PathLike):
 def make_graphs(save_dir: str | PathLike, trained_results: dict, test_results: dict):
     # eval_arr = get_eval_vals(test_results)
     # print(eval_arr)
-    save_dir = os.path.join(save_dir, "figures")
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
 
     make_lr(save_dir, trained_results)
     make_loss(save_dir, trained_results)
@@ -309,6 +306,15 @@ def make_graphs(save_dir: str | PathLike, trained_results: dict, test_results: d
     # make_roc(save_dir, test_results)
     print("Done")
 
+
+def make_graphs_and_vis(save_dir: str | PathLike, trained_results: dict, test_results: dict, best_models: dict[tuple[str, float]]=None, test_data: DataLoader=None):
+    save_dir = os.path.join(save_dir, "figures")
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
+    make_graphs(save_dir, trained_results, test_results)
+    if best_models is not None and test_data is not None:
+        visualize(save_dir, best_models, test_data)
 
 ######################
 #                    #
@@ -355,8 +361,6 @@ def parse_args():
 
     return args
 
-
-
 def main():
     args = parse_args()
 
@@ -366,7 +370,13 @@ def main():
     torch.cuda.manual_seed_all(RAND_SEED)
 
     save_dir = args.save_dir
+
     trained_results, test_results = load_results_data(save_dir)
+
+    save_dir = os.path.join(save_dir, "figures")
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
     make_graphs(save_dir, trained_results, test_results)
 
     # best_models, test_data = setup_visualize(args, save_dir, test_results)
