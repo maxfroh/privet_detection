@@ -20,7 +20,7 @@ from operator import itemgetter
 from sklearn.model_selection import KFold
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
 from torchvision.transforms import v2 as T
@@ -43,6 +43,7 @@ SCHEDULER_GAMMA = 0.1
 ######################
 #  Setup  Functions  #
 ######################
+
 
 def set_seeds():
     random.seed(RAND_SEED)
@@ -75,57 +76,68 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str, batch_size: int = BATCH_SIZE, num_folds: int=1) -> dict[int, tuple[DataLoader, DataLoader, DataLoader]]:
+def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str, batch_size: int = BATCH_SIZE, num_folds: int = 1) -> dict[int, tuple[DataLoader, DataLoader, DataLoader]]:
     is_multispectral = True if channels == "all" else False
 
     g = torch.Generator()
     g.manual_seed(RAND_SEED)
 
     dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
-                                  is_multispectral=is_multispectral)
-    
-    train_transform = get_transforms(False)
-    test_transform = get_transforms(True)
+                            is_multispectral=is_multispectral)
 
+    train_transform = get_transforms(train=True)
+    test_transform = get_transforms(train=False)
+        
     dls: dict[int, tuple[DataLoader, DataLoader, DataLoader]] = {}
+    idxs = np.random.permutation(range(len(dataset)))
 
     if num_folds > 1:
+        # 20%
+        test_idx = len(dataset) - int(len(dataset) * 0.1)
+        train_idxs = idxs[:test_idx]
+        test_idxs = idxs[test_idx:]
+        full_train_data = Subset(dataset=dataset, indices=train_idxs)
+        test_data = Subset(dataset=dataset, indices=test_idxs)
+        test_data = DataLoader(
+            dataset=test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
         fold = KFold(n_splits=num_folds, shuffle=True, random_state=RAND_SEED)
 
-        splits = fold.split(training_data)
-        for fold, (train, test) in enumerate(splits):
-            print(fold)
-            print(len(train), len(test))
-            val_idxs = [test[i] for i in range(0, len(test), 2)]
-            test_idxs = [test[i] for i in range(1, len(test), 2)]
-            print(len(train), len(test_idxs), len(val_idxs))
-            training_data = torch.utils.data.Subset(dataset, train)
-            validation_data = torch.utils.data.Subset(dataset, )
-            dls[fold] = None
+        splits = fold.split(full_train_data)
+        for fold, (train, val) in enumerate(splits):
+            training_data = Subset(dataset, train)
+            validation_data = Subset(dataset, val)
+            training_data.transform = train_transform
+            validation_data.transform = test_transform
+            training_data = DataLoader(
+                dataset=training_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+            validation_data = DataLoader(
+                dataset=validation_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+            dls[fold] = (training_data, validation_data, test_data)
 
     else:
         # 80/10/10 split for data
         idxs = torch.randperm(len(dataset)).tolist()
         one_tenth = len(dataset) // 10
-        training_data = torch.utils.data.Subset(
+        training_data = Subset(
             dataset, idxs[:one_tenth * 8])
         training_data.dataset.transform = train_transform
-        validation_data = torch.utils.data.Subset(
+        validation_data = Subset(
             dataset, idxs[one_tenth * 8:one_tenth * 9])
         validation_data.dataset.transform = test_transform
-        testing_data = torch.utils.data.Subset(dataset, idxs[one_tenth * 9:])
-        testing_data.dataset.transform = test_transform
+        test_data = Subset(dataset, idxs[one_tenth * 9:])
+        test_data.dataset.transform = test_transform
 
         training_data = DataLoader(
             dataset=training_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
         validation_data = DataLoader(
             dataset=validation_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-        testing_data = DataLoader(
-            dataset=testing_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-        
-        dls[0] = (training_data, validation_data, testing_data)
-    
-    return dls 
+        test_data = DataLoader(
+            dataset=test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+        dls[0] = (training_data, validation_data, test_data)
+
+    return dls
 
 
 def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning_rate: float):
@@ -141,9 +153,10 @@ def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning
 def get_model_name(num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, fold: int):
     return f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}_f{fold}"
 
+
 def get_model_dir(save_dir: str | PathLike, model_name: str):
     return os.path.join(save_dir, "models",
-                f"{model_name}.pt")
+                        f"{model_name}.pt")
 
 
 def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str, curr_epoch: int, optimizer: Optimizer, scheduler: LRScheduler, top_5_mAPs: list[tuple[str, float]]):
@@ -160,10 +173,12 @@ def save_model(model: torch.nn.Module, save_dir: str | PathLike, model_name: str
         get_model_dir(save_dir, model_name)
     )
 
-def remove_model(save_dir: str | PathLike, model_name: str):
-    os.remove(get_model_dir(save_dir, model_name)) 
 
-def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args, *, dataloaders: dict[str, DataLoader] = None, best_models: list[tuple[str, float]]= None):
+def remove_model(save_dir: str | PathLike, model_name: str):
+    os.remove(get_model_dir(save_dir, model_name))
+
+
+def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args, *, dataloaders: dict[str, DataLoader] = None, best_models: list[tuple[str, float]] = None):
     """
     Output the results from training and testing to the specified directory.
     """
@@ -174,7 +189,7 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
             f.write(line)
         if dataloaders:
             for name, dataloader in dataloaders.items():
-                f.write(f"{name} size: {len(dataloader)}\n") 
+                f.write(f"{name} size: {len(dataloader)}\n")
         if best_models:
             f.write("Best models:")
             for item in best_models:
@@ -186,8 +201,10 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
 #  Model  Functions  #
 ######################
 
+
 def get_class_name(label: torch.Tensor):
     return {1: "privet", 2: "yew", 3: "path"}[label.item()]
+
 
 def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: DataLoader, device, epoch):
     result = train_one_epoch(
@@ -228,7 +245,7 @@ def parse_args():
                         default=OPTIM_MOMENTUM, help="Optimizer momentum")
     parser.add_argument("--optimizer_weight_decay", type=float,
                         default=OPTIM_WEIGHT_DECAY, help="Optimizer weight decay")
-    parser.add_argument("--fivefold", type=bool, default=False)
+    parser.add_argument("--kfold", type=int, default=1)
 
     args = parser.parse_args()
 
@@ -246,7 +263,7 @@ def main():
 
     set_seeds()
 
-    num_folds = 5 if args.fivefold else 1
+    num_folds = args.kfold
 
     for batch_size in args.batch_size:
         for num_epochs in args.num_epochs:
@@ -291,30 +308,30 @@ def main():
 
                     start_time = time.time()
 
-                    for e in range(num_epochs):
-                        print(f"Epoch {e}/{num_epochs}")
-                        trained_results[e] = ref_train(
-                            model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=e)
+                    for epoch in range(num_epochs):
+                        print(f"Epoch {epoch}/{num_epochs}")
+                        trained_results[epoch] = ref_train(
+                            model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=epoch)
                         lr_scheduler.step()
-                        
+
                         # evaluate on the validation dataset
                         validation_result = evaluate(
                             model, validation_data, device=device)
-                        eval_results[e] = validation_result
-                        
+                        eval_results[epoch] = validation_result
+
                         mAP = validation_result.coco_eval['bbox'].stats[1]
-                        
+
                         # save results
                         save_results(save_dir=save_dir,
-                            trained_results=trained_results, test_results=eval_results, args=args)
-                        
+                                     trained_results=trained_results, test_results=eval_results, args=args)
+
                         # save model if in top 5
-                        model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=e, learning_rate=learning_rate, fold)
+                        model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=epoch, learning_rate=learning_rate, fold=fold)
                         if len(top_5_mAPs) < 5:
-                            save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
-                                optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
+                            save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=epoch,
+                                       optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs)
                             top_5_mAPs.append((model_name, mAP))
-                            top_5_mAPs = sorted(top_5_mAPs, key=itemgetter(1), reverse=True)
+                            top_5_mAPs.sort(key=itemgetter(1), reverse=True)
                         elif mAP > top_5_mAPs[-1][1]:
                             for i in range(len(top_5_mAPs)):
                                 if mAP > top_5_mAPs[i][1]:
@@ -322,28 +339,29 @@ def main():
                                     break
                             name_to_delete = top_5_mAPs[-1][0]
                             try:
-                                os.remove(get_model_dir(save_dir, name_to_delete))
+                                os.remove(get_model_dir(
+                                    save_dir, name_to_delete))
                             except:
                                 continue
-                            save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=e,
-                                optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs) 
+                            save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=epoch,
+                                       optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs)
                             top_5_mAPs = top_5_mAPs[:-1]
-                        
+
                     print("\n\nTraining complete!\n\n")
 
                     # test
-                    eval_results[-1] = evaluate(model, test_data, device=device)
+                    eval_results[fold][-1] = evaluate(model,
+                                                test_data, device=device)
                     save_results(save_dir=save_dir,
-                            trained_results=trained_results, test_results=eval_results, args=args, dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, best_models=top_5_mAPs)
+                                 trained_results=trained_results, test_results=eval_results, args=args, dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, best_models=top_5_mAPs)
 
                     total_time = time.time() - start_time
                     print(f"Entire run took {total_time}s")
 
                     make_graphs_and_vis(save_dir=save_dir,
-                                trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
-                
-                print("Complete!")
+                                        trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
 
+                print("Complete!")
 
 
 if __name__ == "__main__":
