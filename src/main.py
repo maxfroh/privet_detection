@@ -190,10 +190,12 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
         if dataloaders:
             for name, dataloader in dataloaders.items():
                 f.write(f"{name} size: {len(dataloader)}\n")
-        if best_models:
-            f.write("Best models:")
-            for item in best_models:
-                f.write(f"\t- Model: {item[0]} | mAP@0.5: {item[1]}")
+        f.write("Best models:")
+        for fold in best_models.keys():
+            if best_models[fold]:
+                f.write(f"\tFold {fold}:")
+                for item in best_models[fold]:
+                    f.write(f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}")
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
 
