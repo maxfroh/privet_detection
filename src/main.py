@@ -280,6 +280,15 @@ def main():
                 batch_size = batch_size
                 dataloaders = get_data(
                     img_dir=args.img_dir, labels_dir=args.labels_dir, channels=args.channels, batch_size=batch_size, num_folds=num_folds)
+
+                trained_results = {}
+                eval_results = {}
+                top_5_mAPs: dict[list[tuple[str, float]]] = {}
+                for fold in range(num_folds):
+                    trained_results[fold] = {}
+                    eval_results[fold] = {}
+                    top_5_mAPs[fold] = []
+
                 for fold, (train_data, validation_data, test_data) in enumerate(dataloaders.values()):
                     print(f"Starting Fold {fold}")
 
@@ -302,22 +311,19 @@ def main():
                     save_dir = get_save_dir(
                         dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
 
-                    trained_results = {}
-                    eval_results = {}
-                    top_5_mAPs: list[tuple[str, float]] = []
 
                     start_time = time.time()
 
                     for epoch in range(num_epochs):
                         print(f"Epoch {epoch}/{num_epochs}")
-                        trained_results[epoch] = ref_train(
+                        trained_results[fold][epoch] = ref_train(
                             model=model, optimizer=optimizer, train_data_loader=train_data, device=device, epoch=epoch)
                         lr_scheduler.step()
 
                         # evaluate on the validation dataset
                         validation_result = evaluate(
                             model, validation_data, device=device)
-                        eval_results[epoch] = validation_result
+                        eval_results[fold][epoch] = validation_result
 
                         mAP = validation_result.coco_eval['bbox'].stats[1]
 
@@ -327,17 +333,17 @@ def main():
 
                         # save model if in top 5
                         model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=epoch, learning_rate=learning_rate, fold=fold)
-                        if len(top_5_mAPs) < 5:
+                        if len(top_5_mAPs[fold]) < 5:
                             save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=epoch,
                                        optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs)
-                            top_5_mAPs.append((model_name, mAP))
-                            top_5_mAPs.sort(key=itemgetter(1), reverse=True)
-                        elif mAP > top_5_mAPs[-1][1]:
-                            for i in range(len(top_5_mAPs)):
-                                if mAP > top_5_mAPs[i][1]:
-                                    top_5_mAPs.insert(i, (model_name, mAP))
+                            top_5_mAPs[fold].append((model_name, mAP))
+                            top_5_mAPs[fold].sort(key=itemgetter(1), reverse=True)
+                        elif mAP > top_5_mAPs[fold][-1][1]:
+                            for i in range(len(top_5_mAPs[fold])):
+                                if mAP > top_5_mAPs[fold][i][1]:
+                                    top_5_mAPs[fold].insert(i, (model_name, mAP))
                                     break
-                            name_to_delete = top_5_mAPs[-1][0]
+                            name_to_delete = top_5_mAPs[fold][-1][0]
                             try:
                                 os.remove(get_model_dir(
                                     save_dir, name_to_delete))
@@ -345,7 +351,7 @@ def main():
                                 continue
                             save_model(model=model, save_dir=save_dir, model_name=model_name, curr_epoch=epoch,
                                        optimizer=optimizer, scheduler=lr_scheduler, top_5_mAPs=top_5_mAPs)
-                            top_5_mAPs = top_5_mAPs[:-1]
+                            top_5_mAPs[fold] = top_5_mAPs[fold][:-1]
 
                     print("\n\nTraining complete!\n\n")
 
@@ -358,8 +364,8 @@ def main():
                     total_time = time.time() - start_time
                     print(f"Entire run took {total_time}s")
 
-                    make_graphs_and_vis(save_dir=save_dir,
-                                        trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
+                    # make_graphs_and_vis(save_dir=save_dir,
+                                        # trained_results=trained_results, test_results=eval_results, best_models=top_5_mAPs, test_data=test_data)
 
                 print("Complete!")
 
