@@ -84,7 +84,7 @@ def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str,
 
     dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
                             is_multispectral=is_multispectral)
-    dataset = Subset(dataset, range(len(dataset) // 10))
+    # dataset = Subset(dataset, range(len(dataset) // 10)) # testing only
 
     train_transform = get_transforms(train=True)
     test_transform = get_transforms(train=False)
