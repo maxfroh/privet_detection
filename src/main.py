@@ -84,6 +84,7 @@ def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str,
 
     dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
                             is_multispectral=is_multispectral)
+    dataset = Subset(dataset, range(len(dataset) // 10))
 
     train_transform = get_transforms(train=True)
     test_transform = get_transforms(train=False)
@@ -140,11 +141,11 @@ def get_data(img_dir: str | PathLike, labels_dir: str | PathLike, channels: str,
     return dls
 
 
-def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning_rate: float):
+def get_save_dir(dir: str | PathLike, num_epochs: int, batch_size: int, learning_rate: float, num_folds: int):
     if not os.path.exists(dir):
         os.makedirs(dir)
     cts = time.localtime()
-    name = f"{cts[0]:02d}{cts[1]:02d}{cts[2]:02d}_{cts[3]:02d}{cts[4]:02d}{cts[5]:02d}_e{num_epochs}_b{batch_size}_lr{learning_rate}"
+    name = f"{cts[0]:02d}{cts[1]:02d}{cts[2]:02d}_{cts[3]:02d}{cts[4]:02d}{cts[5]:02d}_e{num_epochs}_b{batch_size}_lr{learning_rate}_kf{num_folds}"
     save_dir = os.path.join(dir, name)
     os.mkdir(save_dir)
     return save_dir
@@ -191,12 +192,12 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
             for name, dataloader in dataloaders.items():
                 f.write(f"{name} size: {len(dataloader)}\n")
         if best_models:
-            f.write("Best models:")
+            f.write("Best models:\n")
             for fold in best_models.keys():
                 if len(best_models[fold]) > 0:
-                    f.write(f"\tFold {fold}:")
+                    f.write(f"\tFold {fold}:\n")
                     for item in best_models[fold]:
-                        f.write(f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}")
+                        f.write(f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}\n")
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
 
@@ -292,6 +293,9 @@ def main():
                     eval_results[fold] = {}
                     top_5_mAPs[fold] = []
 
+                save_dir = get_save_dir(
+                    dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate, num_folds=num_folds)
+
                 for fold, (train_data, validation_data, test_data) in enumerate(dataloaders.values()):
                     print(f"Starting Fold {fold}")
 
@@ -311,10 +315,6 @@ def main():
                         gamma=args.scheduler_gamma
                     )
 
-                    save_dir = get_save_dir(
-                        dir=args.results_dir, num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
-
-
                     start_time = time.time()
 
                     for epoch in range(num_epochs):
@@ -332,8 +332,10 @@ def main():
 
                         # save results
                         save_results(save_dir=save_dir,
-                                     trained_results=trained_results, test_results=eval_results, args=args)
-
+                                    trained_results=trained_results, test_results=eval_results, args=args, 
+                                    dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, 
+                                    best_models=top_5_mAPs)
+                        
                         # save model if in top 5
                         model_name = get_model_name(num_epochs=num_epochs, batch_size=batch_size, curr_epoch=epoch, learning_rate=learning_rate, fold=fold)
                         if len(top_5_mAPs[fold]) < 5:
@@ -362,7 +364,9 @@ def main():
                     eval_results[fold][-1] = evaluate(model,
                                                 test_data, device=device)
                     save_results(save_dir=save_dir,
-                                 trained_results=trained_results, test_results=eval_results, args=args, dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, best_models=top_5_mAPs)
+                                 trained_results=trained_results, test_results=eval_results, args=args, 
+                                 dataloaders={"training_data": train_data, "validation_data": validation_data, "testing_data": test_data}, 
+                                 best_models=top_5_mAPs)
 
                     total_time = time.time() - start_time
                     print(f"Entire run took {total_time}s")
