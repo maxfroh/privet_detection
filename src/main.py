@@ -178,7 +178,7 @@ def remove_model(save_dir: str | PathLike, model_name: str):
     os.remove(get_model_dir(save_dir, model_name))
 
 
-def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args, *, dataloaders: dict[str, DataLoader] = None, best_models: list[tuple[str, float]] = None):
+def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], test_results: dict, args, *, dataloaders: dict[str, DataLoader] = None, best_models: dict[list[tuple[str, float]]] = None):
     """
     Output the results from training and testing to the specified directory.
     """
@@ -190,12 +190,13 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
         if dataloaders:
             for name, dataloader in dataloaders.items():
                 f.write(f"{name} size: {len(dataloader)}\n")
-        f.write("Best models:")
-        for fold in best_models.keys():
-            if best_models[fold]:
-                f.write(f"\tFold {fold}:")
-                for item in best_models[fold]:
-                    f.write(f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}")
+        if best_models:
+            f.write("Best models:")
+            for fold in best_models.keys():
+                if len(best_models[fold]) > 0:
+                    f.write(f"\tFold {fold}:")
+                    for item in best_models[fold]:
+                        f.write(f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}")
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
 
