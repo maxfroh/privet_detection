@@ -198,6 +198,9 @@ def save_results(save_dir: str | PathLike, trained_results: dict[int, dict], tes
                     f.write(f"\tFold {fold}:\n")
                     for item in best_models[fold]:
                         f.write(f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}\n")
+        f.write("\n\n")
+        cts = time.localtime()
+        f.write(f"Time of writing: {cts[1]:02d}/{cts[2]:02d}/{cts[0]:02d} {cts[3]:02d}:{cts[4]:02d}:{cts[5]:02d}\n")
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
 
@@ -272,13 +275,6 @@ def main():
     for batch_size in args.batch_size:
         for num_epochs in args.num_epochs:
             for learning_rate in args.learning_rate:
-                # set up model
-                num_channels = 3
-                if args.channels == "all":
-                    num_channels = 14
-                model = get_model(args.model, num_channels=num_channels)
-                # print(model)
-                model.to(device)
 
                 # set up data
                 batch_size = batch_size
@@ -298,6 +294,14 @@ def main():
 
                 for fold, (train_data, validation_data, test_data) in enumerate(dataloaders.values()):
                     print(f"Starting Fold {fold}")
+                    
+                    # set up model
+                    num_channels = 3
+                    if args.channels == "all":
+                        num_channels = 14
+                    model = get_model(args.model, num_channels=num_channels)
+                    # print(model)
+                    model.to(device)
 
                     # construct an optimizer
                     params = [p for p in model.parameters() if p.requires_grad]
