@@ -5,7 +5,7 @@
 import os
 import pandas as pd
 
-from typing import Callable
+from typing import Callable, Union
 
 import torch
 from torch import Tensor

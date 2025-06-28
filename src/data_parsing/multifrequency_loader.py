@@ -9,6 +9,7 @@ import argparse
 import os
 
 from PIL import Image
+from typing import Union
 
 import numpy as np
 
@@ -151,7 +152,7 @@ def process_dir(directory: str):
         filename = os.path.join(ms_dir_name, file) + ".pt"
         torch.save(arr.contiguous(), filename)
 
-def process_file(file: str | os.PathLike[str]) -> Tensor:
+def process_file(file: Union[str, os.PathLike[str]]) -> Tensor:
     """
     Open a file and its other multispectral versions and return a tensor.
     """
