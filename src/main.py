@@ -90,7 +90,7 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
                             is_multispectral=is_multispectral)
 
     fold_data: dict[int, tuple[Data, Data]] = {}
-    idxs = np.random.permutation(range(len(dataset)))
+    idxs = np.random.permutation(range(len(dataset) // 3))
 
     train_transform = get_transforms(train=True)
     test_transform = get_transforms(train=False)
@@ -241,14 +241,14 @@ def save_results(save_dir: Union[str, PathLike], trained_results: dict[int, dict
         if dataloaders:
             for name, dataloader in dataloaders.items():
                 f.write(f"{name} size: {len(dataloader)}\n")
-        if best_models:
-            f.write("Best models:\n")
-            for fold in best_models.keys():
-                if len(best_models[fold]) > 0:
-                    f.write(f"\tFold {fold}:\n")
-                    for item in best_models[fold]:
-                        f.write(
-                            f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}\n")
+        # if best_models:
+        #     f.write("Best models:\n")
+        #     for fold in best_models.keys():
+        #         if len(best_models[fold]) > 0:
+        #             f.write(f"\tFold {fold}:\n")
+        #             for item in best_models[fold]:
+        #                 f.write(
+        #                     f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}\n")
         f.write("\n\n")
         cts = time.localtime()
         f.write(
@@ -306,6 +306,8 @@ def train_with_folds(args, device, hyperparameters: list[Union[int, float]], fol
         
         save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
 
+        start_time = time.time()
+
         try:
             for fold, (train_data, val_data) in fold_data.items():
                 if fold not in trained_results:
@@ -319,24 +321,21 @@ def train_with_folds(args, device, hyperparameters: list[Union[int, float]], fol
                 model, optimizer, lr_scheduler = setup_fold(
                     args.model, device, channels, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
 
-                start_time = time.time()
-
                 for epoch in range(num_epochs):
-                    continue
                     trained_results[fold][epoch] = ref_train(
                         model=model, optimizer=optimizer, train_data_loader=train_dataloader, device=device, epoch=epoch)
                     lr_scheduler.step()
 
-                # evaluate on the validation dataset
-                validation_result = evaluate(
-                    model, val_dataloader, device=device)
-                eval_results[fold][epoch] = validation_result
+                    # evaluate on the validation dataset
+                    validation_result = evaluate(
+                        model, val_dataloader, device=device)
+                    eval_results[fold][epoch] = validation_result
         finally:
             total_time = time.time() - start_time
             print(f"Entire run took {total_time}s")
 
             save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})
-            make_graphs_and_vis(save_dir, trained_results, eval_results, train_data, val_data, model)
+            make_graphs_and_vis(save_dir, trained_results, eval_results, train_data, val_data, model, device)
 
 
 ######################

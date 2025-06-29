@@ -145,7 +145,8 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
 
             boxed_img = draw_bounding_boxes((image_cpu * 255).byte().squeeze(0),
                                             boxes, labels=label_strings, 
-                                            colors=colors, width=4, font_size=16)
+                                            colors=colors, width=4, font_size=16,
+                                            font="arial.ttf")
 
             group_imgs[has_threshold].append(boxed_img)
 
