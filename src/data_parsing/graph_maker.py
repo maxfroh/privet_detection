@@ -211,15 +211,15 @@ def plot_folds_epochs_multiple(fold_dicts: list[dict[int, list[float]]], labels:
 
 
 def make_lr(save_dir: Union[str, PathLike], trained_results: dict[int, dict[int, MetricLogger]]):
-    learning_rate = np.array([[i, trained_results[0][i].meters["lr"].avg]
-                             for i in range(len(trained_results))])
+
+    learning_rate = [np.mean([trained_results[j][i].meters["lr"].avg for j in range(len(trained_results))]) for i in range(len(trained_results[0]))]
 
     plt.figure(figsize=(4, 4))
     plt.title("Learning Rate per Epoch")
     plt.xlabel("Epoch Number")
     plt.ylabel("Learning Rate")
 
-    plt.semilogy(learning_rate[:, 0], learning_rate[:, 1])
+    plt.semilogy(learning_rate)
 
     plt.grid()
 
