@@ -1,7 +1,3 @@
-from models.fast_rcnn import FasterRCNNResNet101
-from data_parsing.dataloader import PrivetDataset
-from torch_references.utils import *
-from torch_references.coco_eval import *
 import os
 import sys
 import re
@@ -28,6 +24,10 @@ from torchvision.utils import draw_bounding_boxes
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+from models.fast_rcnn import FasterRCNNResNet101
+from data_parsing.dataloader import PrivetDataset
+from torch_references.utils import *
+from torch_references.coco_eval import *
 
 RAND_SEED = 7
 
@@ -152,7 +152,7 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
 
             if idx in [0, 1]:
                 pil_img = to_pil_image(boxed_img)
-                pil_img.save(os.path.join(save_dir, f"val_prediction_{idx}_{"thr" if has_threshold else "no_thr"}.jpg"))
+                pil_img.save(os.path.join(save_dir, f"val_prediction_{idx}_{'thr' if has_threshold else 'no_thr'}.jpg"))
 
         for has_threshold in [False, True]:
             fig, axes = plt.subplots(grid_rows, grid_cols, figsize=(16, 16))
@@ -166,7 +166,48 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
                     axis.remove()
 
             plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f"val_boxes_{"thr" if has_threshold else "no_thr"}.jpg"))
+            plt.savefig(os.path.join(save_dir, f"val_boxes_{'thr' if has_threshold else 'no_thr'}.jpg"))
+
+
+def plot_folds_epochs(fold_dict: dict[int, list[float]], title: str, y_label: str, figname: str, save_dir: Union[str, PathLike], thicken: bool = False):
+    plt.figure(figsize=(10,6))
+    
+    avg_values = np.mean(list(fold_dict.values()), axis=0)
+    std_values = np.std(list(fold_dict.values()), axis=0)
+    
+    plt.plot(range(len(avg_values)), avg_values, lw=6 if thicken else 2)
+    plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, 
+                     alpha=0.25, label="±1 std.")
+    
+    plt.title(title)
+    plt.xlabel("Epoch")
+    plt.ylabel(y_label)
+    plt.grid(True)
+    
+    plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
+    plt.savefig(os.path.join(save_dir, figname), dpi=300, bbox_inches="tight")
+   
+    
+def plot_folds_epochs_multiple(fold_dicts: list[dict[int, list[float]]], labels: list[str], title: str, y_label: str, figname: str, save_dir: Union[str, PathLike], thicken: list[bool] = None):
+    plt.figure(figsize=(10,6))
+    
+    for i in range(len(fold_dicts)):
+        avg_values = np.mean(list(fold_dicts[i].values()), axis=0)
+        std_values = np.std(list(fold_dicts[i].values()), axis=0)
+        
+        thicken_line = False if thicken is None or len(thicken) == 0 else thicken[i]
+        plt.plot(range(len(avg_values)), avg_values, label=f"{labels[i]}", lw=6 if thicken_line else 2)
+        plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, 
+                         alpha=0.25, label="±1 std.")
+        
+    plt.title(title)
+    plt.xlabel("Epoch")
+    plt.ylabel(y_label)
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
+    plt.savefig(os.path.join(save_dir, figname), dpi=300, bbox_inches="tight")
 
 
 def make_lr(save_dir: Union[str, PathLike], trained_results: dict[int, dict[int, MetricLogger]]):
@@ -194,140 +235,83 @@ def make_loss(save_dir: Union[str, PathLike], train_results: dict[int, dict[int,
         "loss_rpn_box_reg": "RPN Box Training Loss"
     }
 
-    cmap = plt.cm.get_cmap("cividis", len(train_results))
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
     axes = axes.flatten()
 
     for i, key in enumerate(loss_keys.keys()):
         axis = axes[i]
+        
+        epoch_vals = {}
+        epochs = sorted(train_results[0].keys())
         for fold, epoch_dict in train_results.items():
-            epochs = sorted(epoch_dict.keys())
-            values = [epoch_dict[e].meters[key].global_avg for e in epochs]
-            axis.plot(epochs, values, label=f"Fold {fold}")
-            axis.set_title(f"{key}")
-            axis.set_xlabel("Epoch")
-            axis.set_ylabel(f"{loss_keys[key]}")
-            axis.grid(True)
-            axis.legend()
+            for e in epochs:
+                if e not in epoch_vals:
+                    epoch_vals[e] = []
+                epoch_vals[e].append(epoch_dict[e].meters[key].global_avg)
+        
+        epoch_vals = list(epoch_vals.values())
+        means = np.mean(epoch_vals, axis=1)
+        std = np.std(epoch_vals, axis=1)
+        
+        axis.plot(epochs, means, label=f"Fold {fold}")
+        axis.fill_between(epochs, means - std, means + std, 
+                         alpha=0.25, label="±1 std.")
+        axis.set_title(f"{key}")
+        axis.set_xlabel("Epoch")
+        axis.set_ylabel(f"{loss_keys[key]}")
+        axis.grid(True)
 
     plt.suptitle("Loss Metrics per Epoch", fontsize=16)
 
-    plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
+    plt.tight_layout(rect=[0.2, 0.05, 0.98, 0.95])
 
     plt.savefig(os.path.join(save_dir, f"loss.png"),
                 dpi=300, bbox_inches="tight")
 
 
-def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
-    metrics = {"recall": "Recall", "precision": "Precision",
-               "mAP_0.5": "mAP@0.5", "mAP_0.5_0.95": "mAP@0.5:0.95"}
-    cmap = plt.cm.get_cmap("viridis", len(eval_results))
+def make_map(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
+    # TxRxKxAxM
+    # T = 0-10 [.5:.05:.95] iou thresholds                  => 0
+    # R = 101 [0:.01:1] recall thresholds                   => ?
+    # K = 3? # categories                                   => i
+    # A = 4 areas for object (all, small, medium, large)    => 0
+    # M = 3 [1 10 100] max detections threshold             => 2
+        
+    aps_05_1 = {}
+    aps_05_2 = {}
+    maps_05 = {}
+    aps_05_095_1 = {}
+    aps_05_095_2 = {}
+    maps_05_095 = {}
+    
+    for fold, epoch_dict in eval_results.items():
+        epochs = sorted(epoch_dict.keys())
+        
+        aps_05_1[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][0, :, 0, 0, 2]) for e in epochs]
+        aps_05_2[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][0, :, 1, 0, 2]) for e in epochs]
+        maps_05[fold] = [epoch_dict[e].coco_eval["bbox"].stats[1] for e in epochs]
+        
+        aps_05_095_1[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][:, :, 0, 0, 2]) for e in epochs]
+        aps_05_095_2[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][:, :, 1, 0, 2]) for e in epochs]
+        maps_05_095[fold] = [epoch_dict[e].coco_eval["bbox"].stats[0] for e in epochs]
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
-    axes = axes.flatten()
+    plot_folds_epochs_multiple(fold_dicts=[maps_05, aps_05_1, aps_05_2], 
+                                labels=["mAP@0.5", "Chinese privet AP@0.5", "Yew AP@0.5"], 
+                                title="Average Precisions @ 0.5", y_label="Precision",
+                                figname="ap05.png", save_dir=save_dir, thicken=[True, False, False])
+    
+    plot_folds_epochs_multiple(fold_dicts=[maps_05_095, aps_05_095_1, aps_05_095_2], 
+                                labels=["mAP@0.5:0.95", "Chinese privet AP@0.5:0.95", "Yew AP@0.5:0.95"], 
+                                title="Average Precisions @ 0.5:0.95", y_label="Precision",
+                                figname="ap05_095.png", save_dir=save_dir, thicken=[True, False, False])
 
-    for i, metric in enumerate(metrics):
-        axis = axes[i]
 
-        fold_values = {}
-        for fold, epoch_dict in eval_results.items():
-            epochs = sorted(epoch_dict.keys())
-            values = [epoch_dict[e].coco_eval["bbox"].stats[i]
-                      for e in epochs]  # Adjust index based on metric
-            fold_values[fold] = values
-
-        avg_values = np.mean(list(fold_values.values()), axis=0)
-        std_values = np.std(list(fold_values.values()), axis=0)
-        min_values = np.min(list(fold_values.values()), axis=0)
-        max_values = np.max(list(fold_values.values()), axis=0)
-
-        axis.plot(epochs, avg_values, label="Average",
-                  color="black", linestyle="-", lw=2)
-        # std
-        axis.fill_between(epochs, avg_values - std_values, avg_values +
-                          std_values, color="gray", alpha=0.5, label="±1 Std")
-        # min/max
-        axis.fill_between(epochs, min_values, max_values,
-                          color="lightgray", alpha=0.3, label="Min/Maxis")
-
-        axis.set_title(f"{metrics[metric]} per Epoch")
-        axis.set_xlabel("Epoch")
-        axis.set_ylabel(metrics[metric])
-        axis.grid(True)
-        axis.legend()
-
-    plt.suptitle("Evaluation Metrics per Epoch (Across Folds)", fontsize=16)
-
-    plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
-
-    plt.savefig(os.path.join(save_dir, "pr.png"),
-                dpi=300, bbox_inches="tight")
+def make_pr():
+    pass
 
 
 def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
-    metrics = ['f1_overall', 'f1_per_class']
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    axes = axes.flatten()  # So we can index them with a single loop
-
-    for i, metric in enumerate(metrics):
-        axis = axes[i]
-
-        # Collect F1 scores for each fold and epoch
-        fold_values = {}
-
-        for fold, epoch_dict in eval_results.items():
-            epochs = sorted(epoch_dict.keys())
-            values = []
-
-            for e in epochs:
-                evaluator = epoch_dict[e]
-                coco_eval = evaluator.coco_eval['bbox']
-
-                if metric == 'f1_overall':
-                    precision = coco_eval.stats[1]
-                    recall = coco_eval.stats[0]
-                    f1 = 2 * (precision * recall) / (precision + recall)
-                    values.append(f1)
-
-                elif metric == 'f1_per_class':
-                    f1_class = coco_eval.stats[3:]
-                    values.append(f1_class)
-
-            fold_values[fold] = values
-
-        avg_values = np.mean(list(fold_values.values()), axis=0)
-        std_values = np.std(list(fold_values.values()), axis=0)
-
-        if metric == 'f1_overall':
-            axis.plot(epochs, avg_values, label='Average F1',
-                      color='black', linestyle='-', lw=2)
-            axis.fill_between(epochs, avg_values - std_values, avg_values +
-                              std_values, color='gray', alpha=0.5, label='±1 Std')
-            axis.set_title('Overall F1 Confidence Curve (Across Folds)')
-            axis.set_ylabel('F1 Score')
-
-        elif metric == 'f1_per_class':
-            for class_idx in range(len(avg_values[0])):
-                class_avg = np.array([v[class_idx] for v in avg_values])
-                class_std = np.array([v[class_idx] for v in std_values])
-                axis.plot(epochs, class_avg,
-                          label=f'Class {class_idx} F1', lw=2)
-                axis.fill_between(epochs, class_avg - class_std,
-                                  class_avg + class_std, alpha=0.3)
-
-            axis.set_title('Per-Class F1 Confidence Curve (Across Folds)')
-            axis.set_ylabel('F1 Score')
-
-        axis.set_xlabel('Epoch')
-        axis.grid(True)
-        axis.legend()
-
-    plt.suptitle('F1 Confidence Curves (Across Folds)', fontsize=16)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    plt.savefig(os.path.join(save_dir, "f1.png"),
-                dpi=300, bbox_inches="tight")
+    pass
 
 
 ######################
@@ -347,7 +331,7 @@ def load_results_data(save_dir: Union[str, PathLike]):
 def make_graphs(save_dir: Union[str, PathLike], trained_results: dict, eval_results: dict):
     make_lr(save_dir, trained_results)
     make_loss(save_dir, trained_results)
-    make_pr(save_dir, eval_results)
+    make_map(save_dir, eval_results)
     make_f1(save_dir, eval_results)
     print("Done")
 
@@ -422,13 +406,13 @@ def main():
 
     save_dir = args.save_dir
 
-    trained_results, test_results = load_results_data(save_dir)
+    trained_results, eval_results = load_results_data(save_dir)
 
     save_dir = os.path.join(save_dir, "figures")
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
-    # make_graphs(save_dir, trained_results, test_results)
+    make_graphs(save_dir, trained_results, eval_results)
 
     # best_models, test_data = setup_visualize(args, save_dir, test_results)
 
