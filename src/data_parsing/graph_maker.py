@@ -125,9 +125,9 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
             prediction = model([image])[0]
 
         image_cpu = image.cpu()
-        boxes = prediction['boxes'].cpu()
-        labels = prediction['labels'].cpu()
-        scores = prediction['scores'].cpu()
+        boxes = prediction["boxes"].cpu()
+        labels = prediction["labels"].cpu()
+        scores = prediction["scores"].cpu()
 
         keep = scores >= score_threshold
         boxes_thr = boxes[keep]
@@ -161,7 +161,7 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
             for i, axis in enumerate(axes):
                 if i < len(group_imgs[has_threshold]):
                     axis.imshow(to_pil_image(group_imgs[has_threshold][i]))
-                    axis.axis('off')
+                    axis.axis("off")
                 else:
                     axis.remove()
 
@@ -287,12 +287,12 @@ def make_map(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, C
     for fold, epoch_dict in eval_results.items():
         epochs = sorted(epoch_dict.keys())
         
-        aps_05_1[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][0, :, 0, 0, 2]) for e in epochs]
-        aps_05_2[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][0, :, 1, 0, 2]) for e in epochs]
+        aps_05_1[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval["precision"][0, :, 0, 0, 2]) for e in epochs]
+        aps_05_2[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval["precision"][0, :, 1, 0, 2]) for e in epochs]
         maps_05[fold] = [epoch_dict[e].coco_eval["bbox"].stats[1] for e in epochs]
         
-        aps_05_095_1[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][:, :, 0, 0, 2]) for e in epochs]
-        aps_05_095_2[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval['precision'][:, :, 1, 0, 2]) for e in epochs]
+        aps_05_095_1[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval["precision"][:, :, 0, 0, 2]) for e in epochs]
+        aps_05_095_2[fold] = [np.mean(epoch_dict[e].coco_eval["bbox"].eval["precision"][:, :, 1, 0, 2]) for e in epochs]
         maps_05_095[fold] = [epoch_dict[e].coco_eval["bbox"].stats[0] for e in epochs]
 
     plot_folds_epochs_multiple(fold_dicts=[maps_05, aps_05_1, aps_05_2], 
@@ -417,6 +417,11 @@ def main():
     # best_models, test_data = setup_visualize(args, save_dir, test_results)
 
     # visualize(save_dir, best_models, test_data)
+    # states = torch.load("C:/Users/maxos/OneDrive - rit.edu/2245/reu/results/training_out_8b/models/8b_53_of_100e_0.001.pt", weights_only=False)
+    # model = FasterRCNNResNet101(num_channels=3).load_state_dict(states["model_state_dict"])
+    # device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    
+    # visualize(save_dir, model, device, train_data, val_data)
 
 
 if __name__ == "__main__":

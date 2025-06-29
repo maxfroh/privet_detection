@@ -241,14 +241,6 @@ def save_results(save_dir: Union[str, PathLike], trained_results: dict[int, dict
         if dataloaders:
             for name, dataloader in dataloaders.items():
                 f.write(f"{name} size: {len(dataloader)}\n")
-        # if best_models:
-        #     f.write("Best models:\n")
-        #     for fold in best_models.keys():
-        #         if len(best_models[fold]) > 0:
-        #             f.write(f"\tFold {fold}:\n")
-        #             for item in best_models[fold]:
-        #                 f.write(
-        #                     f"\t\t- Model: {item[0]} | mAP@0.5: {item[1]}\n")
         f.write("\n\n")
         cts = time.localtime()
         f.write(
