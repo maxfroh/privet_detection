@@ -138,8 +138,6 @@ def old_get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike]
     dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
                             is_multispectral=is_multispectral)
 
-    # dataset = Subset(dataset, range(len(dataset) // 10)) # testing only
-
     train_transform = get_transforms(train=True)
     test_transform = get_transforms(train=False)
 
@@ -247,6 +245,7 @@ def save_results(save_dir: Union[str, PathLike], trained_results: dict[int, dict
             f"Time of writing: {cts[1]:02d}/{cts[2]:02d}/{cts[0]:02d} {cts[3]:02d}:{cts[4]:02d}:{cts[5]:02d}\n")
     torch.save(trained_results, os.path.join(save_dir, "trained_results.pt"))
     torch.save(test_results, os.path.join(save_dir, "test_results.pt"))
+
 
 ######################
 #  Model  Functions  #

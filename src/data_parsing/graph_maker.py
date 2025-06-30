@@ -103,6 +103,12 @@ def get_best_model(save_dir, best_models):
     return model
 
 
+def calc_f1(P: float, R: float) -> float:
+    # F1 = (2 * P * R) / (P + R)
+    epsilon = 1e-10
+    return (2 * P * R) / (P + R + epsilon)
+
+
 ######################
 #                    #
 ######################
@@ -124,29 +130,29 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
         with torch.no_grad():
             prediction = model([image])[0]
 
-        image_cpu = image.cpu()
-        boxes = prediction["boxes"].cpu()
-        labels = prediction["labels"].cpu()
-        scores = prediction["scores"].cpu()
+        image_cpu = image.cpu() 
+        all_boxes = prediction['boxes'].cpu()
+        all_labels = prediction['labels'].cpu()
+        all_scores = prediction['scores'].cpu()
 
-        keep = scores >= score_threshold
-        boxes_thr = boxes[keep]
-        labels_thr = labels[keep]
-        scores_thr = scores[keep]
+        keep = all_scores >= score_threshold
+        boxes_thr = all_boxes[keep]
+        labels_thr = all_labels[keep]
+        scores_thr = all_scores[keep]
         
-        options = {False: (boxes, labels, scores), True: (boxes_thr, labels_thr, scores_thr)}
+        options = {False: (all_boxes, all_labels, all_scores), True: (boxes_thr, labels_thr, scores_thr)}
         
         for has_threshold, (boxes, labels, scores) in options.items():
 
             label_strings = [f"{get_class_name(label.item())}: {score.item():.4f}" for label, score in zip(
-                prediction["labels"], prediction["scores"])]
+                labels, scores)]
             colors = [get_class_color(label.item())
-                    for label in prediction["labels"]]
+                    for label in labels]
 
             boxed_img = draw_bounding_boxes((image_cpu * 255).byte().squeeze(0),
                                             boxes, labels=label_strings, 
-                                            colors=colors, width=4, font_size=16,
-                                            font="arial.ttf")
+                                            colors=colors, width=4, font_size=60,
+                                            font="arial.ttf", label_colors="white")
 
             group_imgs[has_threshold].append(boxed_img)
 
@@ -169,18 +175,17 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data:
             plt.savefig(os.path.join(save_dir, f"val_boxes_{'thr' if has_threshold else 'no_thr'}.jpg"))
 
 
-def plot_folds_epochs(fold_dict: dict[int, list[float]], title: str, y_label: str, figname: str, save_dir: Union[str, PathLike], thicken: bool = False):
+def plot_folds_epochs(fold_dict: dict[int, list[float]], *, title: str, y_label: str, x_label: str = "Epoch", figname: str, save_dir: Union[str, PathLike], thicken: bool = False):
     plt.figure(figsize=(10,6))
     
     avg_values = np.mean(list(fold_dict.values()), axis=0)
     std_values = np.std(list(fold_dict.values()), axis=0)
     
-    plt.plot(range(len(avg_values)), avg_values, lw=6 if thicken else 2)
-    plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, 
-                     alpha=0.25, label="±1 std.")
+    plt.plot(range(len(avg_values)), avg_values, lw=4 if thicken else 2)
+    plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, alpha=0.25)
     
     plt.title(title)
-    plt.xlabel("Epoch")
+    plt.xlabel(x_label)
     plt.ylabel(y_label)
     plt.grid(True)
     
@@ -196,9 +201,8 @@ def plot_folds_epochs_multiple(fold_dicts: list[dict[int, list[float]]], labels:
         std_values = np.std(list(fold_dicts[i].values()), axis=0)
         
         thicken_line = False if thicken is None or len(thicken) == 0 else thicken[i]
-        plt.plot(range(len(avg_values)), avg_values, label=f"{labels[i]}", lw=6 if thicken_line else 2)
-        plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, 
-                         alpha=0.25, label="±1 std.")
+        plt.plot(range(len(avg_values)), avg_values, label=f"{labels[i]}", lw=4 if thicken_line else 2)
+        plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, alpha=0.25)
         
     plt.title(title)
     plt.xlabel("Epoch")
@@ -255,7 +259,7 @@ def make_loss(save_dir: Union[str, PathLike], train_results: dict[int, dict[int,
         
         axis.plot(epochs, means, label=f"Fold {fold}")
         axis.fill_between(epochs, means - std, means + std, 
-                         alpha=0.25, label="±1 std.")
+                         alpha=0.25)
         axis.set_title(f"{key}")
         axis.set_xlabel("Epoch")
         axis.set_ylabel(f"{loss_keys[key]}")
@@ -296,22 +300,139 @@ def make_map(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, C
         maps_05_095[fold] = [epoch_dict[e].coco_eval["bbox"].stats[0] for e in epochs]
 
     plot_folds_epochs_multiple(fold_dicts=[maps_05, aps_05_1, aps_05_2], 
-                                labels=["mAP@0.5", "Chinese privet AP@0.5", "Yew AP@0.5"], 
+                                labels=["mAP@0.5", "Chinese Privet AP@0.5", "Yew AP@0.5"], 
                                 title="Average Precisions @ 0.5", y_label="Precision",
                                 figname="ap05.png", save_dir=save_dir, thicken=[True, False, False])
     
     plot_folds_epochs_multiple(fold_dicts=[maps_05_095, aps_05_095_1, aps_05_095_2], 
-                                labels=["mAP@0.5:0.95", "Chinese privet AP@0.5:0.95", "Yew AP@0.5:0.95"], 
+                                labels=["mAP@0.5:0.95", "Chinese Privet AP@0.5:0.95", "Yew AP@0.5:0.95"], 
                                 title="Average Precisions @ 0.5:0.95", y_label="Precision",
                                 figname="ap05_095.png", save_dir=save_dir, thicken=[True, False, False])
 
 
-def make_pr():
-    pass
+def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
+    # ["precision"] = TxRxKxAxM
+    # T = 0-10 [.5:.05:.95] iou thresholds                  => 0/:
+    # R = 101 [0:.01:1] recall thresholds                   => ?
+    # K = 3? # categories                                   => i
+    # A = 4 areas for object (all, small, medium, large)    => 0
+    # M = 3 [1 10 100] max detections threshold             => 2
+
+    # ["recall"] = TxKxAxM
 
 
-def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
-    pass
+    # precisions = FxRxK
+    # recalls = FxK
+    best_epoch = np.argmax(np.mean([[eval_results[fold][e].coco_eval["bbox"].stats[0] for e in range(len(eval_results[0]))] for fold in eval_results.keys()], axis=0)).item()
+    precisions = np.array([eval_results[fold][best_epoch].coco_eval["bbox"].eval["precision"][0, :, :, 0, 2] for fold in eval_results.keys()])
+    # recalls = np.array([eval_results[fold][best_epoch].coco_eval["bbox"].eval["recall"][0, :, 0, 2] for fold in eval_results.keys()])
+    avg_prec = np.mean(precisions, axis=-1)
+    priv_prec = precisions[:, :, 0]
+    yew_prec = precisions[:, :, 1]
+    recThrs = eval_results[0][0].coco_eval["bbox"].params.recThrs
+    # avg_rec = np.mean(recalls, axis=-1)
+    # priv_rec = recalls[:, :, 0]
+    # yew_rec = recalls[:, :, 1]
+    
+    # R
+    avg_prec_mean = np.mean(avg_prec, axis=0)
+    avg_prec_std = np.std(avg_prec, axis=0)
+    priv_prec_mean = np.mean(priv_prec, axis=0)
+    priv_prec_std = np.std(priv_prec, axis=0)
+    yew_prec_mean = np.mean(yew_prec, axis=0)
+    yew_prec_std = np.std(yew_prec, axis=0)
+
+    plt.figure(figsize=(10,6))
+    
+    plt.plot(recThrs, avg_prec_mean, label=f"All Classes@0.5", lw=4)
+    plt.fill_between(recThrs, avg_prec_mean - avg_prec_std, avg_prec_mean + avg_prec_std, alpha=0.25)
+    plt.plot(recThrs, priv_prec_mean, label=f"Chinese Privet@0.5", lw=2)
+    plt.fill_between(recThrs, priv_prec_mean - priv_prec_std, priv_prec_mean + priv_prec_std, alpha=0.25)
+    plt.plot(recThrs, yew_prec_mean, label=f"Yew@0.5", lw=2)
+    plt.fill_between(recThrs, yew_prec_mean - yew_prec_std, yew_prec_mean + yew_prec_std, alpha=0.25)
+
+    plt.title("Precision-Recall Curve")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
+    plt.savefig(os.path.join(save_dir, "pr.png"), dpi=300, bbox_inches="tight")
+
+
+def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]): #, model: Module, device: str, val_data: DataLoader):
+    # TxRxKxAxM
+    # T = 0-10 [.5:.05:.95] iou thresholds                  => 0/:
+    # R = 101 [0:.01:1] recall thresholds                   => ?
+    # K = 3? # categories                                   => i
+    # A = 4 areas for object (all, small, medium, large)    => 0
+    # M = 3 [1 10 100] max detections threshold             => 2
+    best_epoch = np.argmax(np.mean([[eval_results[fold][e].coco_eval["bbox"].stats[0] for e in range(len(eval_results[0]))] for fold in eval_results.keys()], axis=0)).item()
+    num_folds = len(eval_results)
+    confidence_thrs = np.linspace(0.0, 1.0, 1001)
+
+    f1 = np.zeros((num_folds, confidence_thrs.shape[0]))
+    f1_priv = np.zeros((num_folds, confidence_thrs.shape[0]))
+    f1_yew = np.zeros((num_folds, confidence_thrs.shape[0]))
+    anns = [eval_results[fold][best_epoch].coco_eval["bbox"].cocoDt.anns for fold in range(num_folds)]
+    coco_gt = [eval_results[fold][best_epoch].coco_eval["bbox"].cocoGt for fold in range(num_folds)]
+
+    for fold in range(num_folds):
+        for i, threshold in enumerate(confidence_thrs):
+            detections = [detection for detection in anns[fold].values() if detection["score"] >= threshold]
+            if len(detections) == 0:
+                f1[fold][i] = 0
+                f1_priv[fold][i] = 0
+                f1_yew[fold][i] = 0
+            else:
+                new_coco_dt = coco_gt[fold].loadRes(detections)
+                new_coco_eval = COCOeval(cocoGt=coco_gt[fold], cocoDt=new_coco_dt, iouType="bbox")
+                new_coco_eval.evaluate()
+                new_coco_eval.accumulate()
+
+                # TxRxKxAxM => TxR => (1,)
+                precision = np.mean(new_coco_eval.eval["precision"][:, :, :, 0, 2])
+                privet_precision = np.mean(new_coco_eval.eval["precision"][:, :, 0, 0, 2])
+                yew_precision = np.mean(new_coco_eval.eval["precision"][:, :, 1, 0, 2])
+                # TxKxAxM => T => (1,)
+                recall = np.mean(new_coco_eval.eval["recall"][:, :, 0, 2])
+                privet_recall = np.mean(new_coco_eval.eval["recall"][:, 0, 0, 2])
+                yew_recall = np.mean(new_coco_eval.eval["recall"][:, 1, 0, 2])
+
+                f1[fold][i] = calc_f1(precision, recall)
+                f1_priv[fold][i] = calc_f1(privet_precision, privet_recall)
+                f1_yew[fold][i] = calc_f1(yew_precision, yew_recall)
+    
+    avg_f1_mean = np.mean(f1, axis=0)
+    avg_f1_std = np.std(f1, axis=0)
+    priv_f1_mean = np.mean(f1_priv, axis=0)
+    priv_f1_std = np.std(f1_priv, axis=0)
+    yew_f1_mean = np.mean(f1_yew, axis=0)
+    yew_f1_std = np.std(f1_yew, axis=0)
+
+    max_idx = np.argmax(avg_f1_mean)
+
+    plt.figure(figsize=(10,6))
+    
+    plt.plot(confidence_thrs, avg_f1_mean, label=f"All Classes F1-Score | {avg_f1_mean[max_idx]:.4f} at {confidence_thrs[max_idx]}", lw=4)
+    plt.fill_between(confidence_thrs, avg_f1_mean - avg_f1_std, avg_f1_mean + avg_f1_std, 
+                        alpha=0.25)
+    plt.plot(confidence_thrs, priv_f1_mean, label=f"Chinese Privet F1-Score", lw=2)
+    plt.fill_between(confidence_thrs, priv_f1_mean - priv_f1_std, priv_f1_mean + priv_f1_std, 
+                        alpha=0.25)
+    plt.plot(confidence_thrs, yew_f1_mean, label=f"Yew F1-Score", lw=2)
+    plt.fill_between(confidence_thrs, yew_f1_mean - yew_f1_std, yew_f1_mean + yew_f1_std, 
+                        alpha=0.25)
+    
+    plt.title("F1-Confidence Curve")
+    plt.xlabel("Confidence")
+    plt.ylabel("F1-Score")
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
+    plt.savefig(os.path.join(save_dir, "f1.png"), dpi=300, bbox_inches="tight")
 
 
 ######################
@@ -332,6 +453,7 @@ def make_graphs(save_dir: Union[str, PathLike], trained_results: dict, eval_resu
     make_lr(save_dir, trained_results)
     make_loss(save_dir, trained_results)
     make_map(save_dir, eval_results)
+    make_pr(save_dir, eval_results)
     make_f1(save_dir, eval_results)
     print("Done")
 
@@ -342,6 +464,7 @@ def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eva
         os.mkdir(save_dir)
 
     make_graphs(save_dir, train_results, eval_results)
+    make_f1(save_dir, eval_results, model, device, val_data)
     visualize(save_dir, model, device, train_data, val_data)
 
 ######################
