@@ -309,34 +309,33 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
 
         start_time = time.time()
 
-        try:
-            for fold, (train_data, val_data) in fold_data.items():
-                if fold not in trained_results:
-                    trained_results[fold] = {}
-                if fold not in eval_results:
-                    eval_results[fold] = {}
+        for fold, (train_data, val_data) in fold_data.items():
+            if fold not in trained_results:
+                trained_results[fold] = {}
+            if fold not in eval_results:
+                eval_results[fold] = {}
 
-                (train_dataloader, val_dataloader) = get_dataloaders(
-                    train_data, val_data, batch_size)
+            (train_dataloader, val_dataloader) = get_dataloaders(
+                train_data, val_data, batch_size)
 
-                model, optimizer, lr_scheduler = setup_fold(
-                    args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
+            model, optimizer, lr_scheduler = setup_fold(
+                args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
 
-                for epoch in range(num_epochs):
-                    trained_results[fold][epoch] = ref_train(
-                        model=model, optimizer=optimizer, train_data_loader=train_dataloader, device=device, epoch=epoch)
-                    lr_scheduler.step()
+            for epoch in range(num_epochs):
+                trained_results[fold][epoch] = ref_train(
+                    model=model, optimizer=optimizer, train_data_loader=train_dataloader, device=device, epoch=epoch)
+                lr_scheduler.step()
 
-                    # evaluate on the validation dataset
-                    validation_result = evaluate(
-                        model, val_dataloader, device=device)
-                    eval_results[fold][epoch] = validation_result
-        finally:
-            total_time = time.time() - start_time
-            print(f"Entire run took {total_time}s")
+                # evaluate on the validation dataset
+                validation_result = evaluate(
+                    model, val_dataloader, device=device)
+                eval_results[fold][epoch] = validation_result
             
-            save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})
-            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
+        total_time = time.time() - start_time
+        print(f"Entire run took {total_time}s")
+        
+        save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})    
+        make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
 
 
 ######################
