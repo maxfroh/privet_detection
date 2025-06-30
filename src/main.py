@@ -293,7 +293,7 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
     return model, optimizer, lr_scheduler
 
 
-def train_with_folds(args, device, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int):
+def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int):
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
