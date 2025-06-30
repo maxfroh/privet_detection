@@ -113,7 +113,7 @@ def calc_f1(P: float, R: float) -> float:
 #                    #
 ######################
 
-def visualize(save_dir: Union[str, PathLike], model: Module, device, train_data: DataLoader, val_data: DataLoader):
+def visualize(save_dir: Union[str, PathLike], model: Module, device, val_data: DataLoader):
     model.to(device)
     model.eval()
 
@@ -458,14 +458,14 @@ def make_graphs(save_dir: Union[str, PathLike], trained_results: dict, eval_resu
     print("Done")
 
 
-def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eval_results: dict, train_data: DataLoader, val_data: DataLoader, model: Module, device):
+def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eval_results: dict, val_data: DataLoader, model: Module, device):
     save_dir = os.path.join(save_dir, "figures")
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
     make_graphs(save_dir, train_results, eval_results)
     make_f1(save_dir, eval_results, model, device, val_data)
-    visualize(save_dir, model, device, train_data, val_data)
+    visualize(save_dir, model, device, val_data)
 
 ######################
 #                    #

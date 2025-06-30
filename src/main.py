@@ -297,10 +297,12 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
+        model = None
+        val_data = None
         
         # set up device
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+                
         print(f"Using {device} device")
         
         save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
@@ -332,9 +334,9 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
         finally:
             total_time = time.time() - start_time
             print(f"Entire run took {total_time}s")
-
+            
             save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})
-            make_graphs_and_vis(save_dir, trained_results, eval_results, train_data, val_data, model, device)
+            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
 
 
 ######################
