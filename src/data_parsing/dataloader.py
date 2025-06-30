@@ -30,8 +30,8 @@ class PrivetDataset(Dataset):
         self.labels_dir = labels_dir
         self.is_multispectral = is_multispectral
         self.transform = transform
-        self.img_locs: dict[int, str] = {}
-        self.labels_locs: dict[int, str] = {}
+        self.imgs: dict[int, Tensor] = {}
+        self.labels: dict[int, list[str]] = {}
         self.classes: dict[int, str] = {}
 
         self.info = {"name": "PrivetDataset", "img_dir": img_dir, "labels_dir": labels_dir, "is_ms": is_multispectral}
@@ -59,14 +59,24 @@ class PrivetDataset(Dataset):
             for filename in filenames:
                 if ".TIF" in filename: 
                     continue
-                self.img_locs[idx] = os.path.join(dirpath, filename)
+                img_loc = os.path.join(dirpath, filename)
                 if self.is_multispectral:
                     extension = ".JPG.pt"
+                    image = torch.load(img_loc)
                 else:
                     extension = ".JPG"
+                    image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
+                self.imgs[idx] = image                    
+
                 labels_filename = filename.replace(extension, ".txt")
-                self.labels_locs[idx] = os.path.join(
+                labels_loc = os.path.join(
                     labels_dir, terminal_dir, labels_filename)
+                try:
+                    with open(labels_loc, mode="r", encoding="utf-8") as lf:
+                        lines = lf.readlines()
+                except:
+                    lines = []
+                self.labels[idx] = lines
                 self.classes[idx] = classes
                 idx += 1
 
@@ -91,7 +101,7 @@ class PrivetDataset(Dataset):
         return self.classes[0][label]
 
     def __len__(self):
-        return len(self.img_locs)
+        return len(self.imgs)
 
     def _calculate_coords(self, hi: int, wi: int, cx: float, cy: float, hb: float, wb: float) -> tuple[float, float, float, float]:
         """
@@ -114,24 +124,14 @@ class PrivetDataset(Dataset):
         return (xmin, ymin, xmax, ymax)
 
     def __getitem__(self, idx) -> tuple[Image, dict]:
-        img_loc = self.img_locs[idx]
-        labels_loc = self.labels_locs[idx]
-
-        if self.is_multispectral:
-            image = torch.load(img_loc)
-        else:
-            image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
+        image = self.imgs[idx]
         if self.transform:
             image = self.transform(image)
 
         # Get bounding boxes and labels
         H = image.shape[1]
         W = image.shape[2]
-        try:
-            with open(labels_loc, mode="r", encoding="utf-8") as lf:
-                lines = lf.readlines()
-        except:
-            lines = []
+        lines = self.labels[idx]
 
         N = len(lines)
         labels = torch.zeros((N), dtype=torch.int64)

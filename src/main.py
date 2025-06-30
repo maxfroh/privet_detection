@@ -21,6 +21,7 @@ from sklearn.model_selection import KFold
 from typing import Union
 
 import torch
+from torch.nn import DataParallel
 from torch.utils.data import DataLoader, Subset
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
@@ -90,7 +91,7 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
                             is_multispectral=is_multispectral)
 
     fold_data: dict[int, tuple[Data, Data]] = {}
-    idxs = np.random.permutation(range(len(dataset)))
+    idxs = np.random.permutation(range(len(dataset) // 5))
 
     train_transform = get_transforms(train=True)
     test_transform = get_transforms(train=False)
@@ -262,13 +263,15 @@ def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: D
     return result
 
 
-def setup_fold(model_name: str, device: str, channels: str, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float):
+def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float):
     # set up model
     num_channels = 3 if channels == "rgb" else 14
     model = get_model(
         model_name, num_channels=num_channels)
-    # print(model)
-    model.to(device)
+
+    if device != "cpu":
+        model = DataParallel(model)
+    model.to(torch.device(device))
 
     # construct an optimizer
     params = [p for p in model.parameters()
@@ -295,6 +298,11 @@ def train_with_folds(args, device, hyperparameters: list[Union[int, float]], fol
         trained_results = {}
         eval_results = {}
         
+        # set up device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        print(f"Using {device} device")
+        
         save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
 
         start_time = time.time()
@@ -310,7 +318,7 @@ def train_with_folds(args, device, hyperparameters: list[Union[int, float]], fol
                     train_data, val_data, batch_size)
 
                 model, optimizer, lr_scheduler = setup_fold(
-                    args.model, device, channels, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
+                    args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
 
                 for epoch in range(num_epochs):
                     trained_results[fold][epoch] = ref_train(
@@ -376,11 +384,6 @@ def main():
     print("Starting...")
     args = parse_args()
 
-    # set up device
-    device = torch.accelerator.current_accelerator().type \
-        if torch.accelerator.is_available() else "cpu"
-    print(f"Using {device} device")
-
     set_seeds()
 
     hyperparameters = [(batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay)
@@ -398,8 +401,7 @@ def main():
 
     (fold_data, test_data) = get_data(
         img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
-    train_with_folds(args, device, hyperparameters,
-                     fold_data, channels, num_folds)
+    train_with_folds(args, hyperparameters, fold_data, channels, num_folds)
 
 
 if __name__ == "__main__":
