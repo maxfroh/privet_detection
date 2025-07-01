@@ -204,14 +204,16 @@ def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: D
 
 
 def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float):
+    
     # set up model
     num_channels = 3 if channels == "rgb" else 14
     model = get_model(
         model_name, num_channels=num_channels)
 
+    model.to(torch.device(device))
+
     if device != "cpu":
         model = DataParallel(model)
-    model.to(torch.device(device))
 
     # construct an optimizer
     params = [p for p in model.parameters()
