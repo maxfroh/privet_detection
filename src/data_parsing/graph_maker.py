@@ -464,7 +464,7 @@ def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eva
         os.mkdir(save_dir)
 
     make_graphs(save_dir, train_results, eval_results)
-    make_f1(save_dir, eval_results, model, device, val_data)
+    make_f1(save_dir, eval_results)
     visualize(save_dir, model, device, val_data)
 
 ######################
