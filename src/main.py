@@ -130,66 +130,6 @@ def get_test_dataloader(test_data: Data, batch_size: int = BATCH_SIZE) -> DataLo
         dataset=test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
 
 
-def old_get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], channels: str, batch_size: int = BATCH_SIZE, num_folds: int = 1) -> dict[int, tuple[DataLoader, DataLoader, DataLoader]]:
-    is_multispectral = True if channels == "all" else False
-
-    g = torch.Generator()
-    g.manual_seed(RAND_SEED)
-
-    dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
-                            is_multispectral=is_multispectral)
-
-    train_transform = get_transforms(train=True)
-    test_transform = get_transforms(train=False)
-
-    dls: dict[int, tuple[DataLoader, DataLoader, DataLoader]] = {}
-    idxs = np.random.permutation(range(len(dataset)))
-
-    if num_folds > 1:
-        # 20%
-        test_idx = len(dataset) - int(len(dataset) * 0.1)
-        train_idxs = idxs[:test_idx]
-        test_idxs = idxs[test_idx:]
-        full_train_data = Subset(dataset=dataset, indices=train_idxs)
-        test_data = Subset(dataset=dataset, indices=test_idxs)
-        test_data = DataLoader(
-            dataset=test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
-
-        fold = KFold(n_splits=num_folds, shuffle=True, random_state=RAND_SEED)
-
-        splits = fold.split(full_train_data)
-        for fold, (train, val) in enumerate(splits):
-            training_data = Subset(dataset, train)
-            validation_data = Subset(dataset, val)
-            training_data.transform = train_transform
-            validation_data.transform = test_transform
-            dls[fold] = (training_data, validation_data)
-
-    else:
-        # 80/10/10 split for data
-        idxs = torch.randperm(len(dataset)).tolist()
-        one_tenth = len(dataset) // 10
-        training_data = Subset(
-            dataset, idxs[:one_tenth * 8])
-        training_data.dataset.transform = train_transform
-        validation_data = Subset(
-            dataset, idxs[one_tenth * 8:one_tenth * 9])
-        validation_data.dataset.transform = test_transform
-        test_data = Subset(dataset, idxs[one_tenth * 9:])
-        test_data.dataset.transform = test_transform
-
-        training_data = DataLoader(
-            dataset=training_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
-        validation_data = DataLoader(
-            dataset=validation_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
-        test_data = DataLoader(
-            dataset=test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
-
-        dls[0] = (training_data, validation_data, test_data)
-
-    return dls
-
-
 def get_save_dir(dir: Union[str, PathLike], num_epochs: int, batch_size: int, learning_rate: float, num_folds: int):
     if not os.path.exists(dir):
         os.makedirs(dir)
@@ -276,6 +216,7 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
     # construct an optimizer
     params = [p for p in model.parameters()
               if p.requires_grad]
+
     optimizer = SGD(
         params,
         lr=learning_rate,
@@ -289,6 +230,8 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
         step_size=step_size,
         gamma=scheduler_gamma
     )
+    
+    print("Model created!")
 
     return model, optimizer, lr_scheduler
 
@@ -310,6 +253,7 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
         start_time = time.time()
 
         for fold, (train_data, val_data) in fold_data.items():
+            print(f"Fold {fold}")
             if fold not in trained_results:
                 trained_results[fold] = {}
             if fold not in eval_results:
