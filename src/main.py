@@ -342,7 +342,7 @@ def run(rank, world_size):
     print("Starting...")
     
     # create default process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    dist.init_process_group("nccl", rank=rank, world_size=world_size, init_method="env://")
 
     args = parse_args()
 
@@ -375,6 +375,4 @@ def main():
 
 
 if __name__ == "__main__":
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29500"
     main()
