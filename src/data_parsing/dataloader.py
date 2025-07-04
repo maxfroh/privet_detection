@@ -9,7 +9,7 @@ from typing import Callable, Union
 
 import torch
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from torchvision.io import decode_image
 from torchvision.tv_tensors import Image, BoundingBoxes, BoundingBoxFormat
 
@@ -157,6 +157,25 @@ class PrivetDataset(Dataset):
             }
         )
 
+
+########
+
+
+class PrivetWrappedDataset(Dataset):
+    """
+    """
+    def __init__(self, dataset: Union[Subset, PrivetDataset], transform: Callable = None):
+        self.dataset = dataset
+        self.transform = transform
+        
+    def __getitem__(self, idx) -> tuple[Image, dict]:
+        img, info = self.dataset[idx]
+        if self.transform is not None:
+            img = self.transform(img)
+        return (img, info)
+    
+    def __len__(self):
+        return len(self.dataset)
 
 # Testing
 

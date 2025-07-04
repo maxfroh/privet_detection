@@ -21,14 +21,17 @@ from sklearn.model_selection import KFold
 from typing import Union
 
 import torch
+import torch.multiprocessing as mp
+import torch.distributed as dist
 from torch.nn import DataParallel
-from torch.utils.data import DataLoader, Subset
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, Subset, DistributedSampler
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
 from torchvision.transforms import v2 as T
 
 from models.fast_rcnn import FasterRCNNResNet101
-from data_parsing.dataloader import PrivetDataset
+from data_parsing.dataloader import PrivetDataset, PrivetWrappedDataset
 from data_parsing.graph_maker import make_graphs_and_vis
 from torch_references.utils import collate_fn
 from torch_references.engine import train_one_epoch, evaluate
@@ -51,11 +54,11 @@ SAVE_MODELS_N = 3
 ######################
 
 
-def set_seeds():
+def set_seeds(rank = 0):
     random.seed(RAND_SEED)
     np.random.seed(RAND_SEED)
-    torch.random.manual_seed(RAND_SEED)
     torch.cuda.manual_seed_all(RAND_SEED)
+    torch.random.manual_seed(RAND_SEED + rank)
 
 
 def get_model(model: str, num_channels: int) -> torch.nn.Module:
@@ -98,8 +101,7 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
 
     test_idx = len(dataset) - int(len(dataset) * 0.2)
     test_idxs = idxs[test_idx:]
-    test_data = Subset(dataset=dataset, indices=test_idxs)
-    test_data.dataset.transform = test_transform
+    test_data = PrivetWrappedDataset(Subset(dataset=dataset, indices=test_idxs), test_transform)
 
     train_idxs = idxs[:test_idx]
     full_train_data = Subset(dataset=dataset, indices=train_idxs)
@@ -108,20 +110,25 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
 
     splits = fold.split(full_train_data)
     for fold, (train, val) in enumerate(splits):
-        training_data = Subset(dataset, train)
-        validation_data = Subset(dataset, val)
-        training_data.transform = train_transform
-        validation_data.transform = test_transform
+        training_data = PrivetWrappedDataset(Subset(dataset, train), train_transform)
+        validation_data = PrivetWrappedDataset(Subset(dataset, val), test_transform)
         fold_data[fold] = (training_data, validation_data)
 
     return (fold_data, test_data)
 
 
-def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE) -> tuple[DataLoader, DataLoader]:
+def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE, rank = None, world_size = None) -> tuple[DataLoader, DataLoader]:
+    if rank is not None:
+        train_sampler = DistributedSampler(train_data, num_replicas=world_size, rank=rank, shuffle=True)
+        val_sampler = DistributedSampler(val_data, num_replicas=world_size, rank=rank, shuffle=False)
+    else:
+        train_sampler = None
+        val_sampler = None
+    
     train_dataloader = DataLoader(
-        dataset=train_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
+        dataset=train_data, batch_size=batch_size, shuffle=(train_sampler is None), sampler=train_sampler, collate_fn=collate_fn, pin_memory=True)
     val_dataloader = DataLoader(
-        dataset=val_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
+        dataset=val_data, batch_size=batch_size, shuffle=False, sampler=val_sampler, collate_fn=collate_fn, pin_memory=True)
     return (train_dataloader, val_dataloader)
 
 
@@ -197,48 +204,47 @@ def get_class_name(label: torch.Tensor):
     return {1: "privet", 2: "yew", 3: "path"}[label.item()]
 
 
-def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_data_loader: DataLoader, device, epoch):
+def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_dataloader: DataLoader, device, epoch, rank=None):
+    if hasattr(train_dataloader.sampler, "set_epoch"):
+        train_dataloader.sampler.set_epoch(epoch)
     result = train_one_epoch(
-        model, optimizer, train_data_loader, device, epoch, print_freq=10)
+        model, optimizer, train_dataloader, device, epoch, print_freq=10)
     return result
 
 
-def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float):
+def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float, rank = None):
+    torch.cuda.set_device(rank)
     
     # set up model
     num_channels = 3 if channels == "rgb" else 14
     model = get_model(
         model_name, num_channels=num_channels)
-
-    model.to(torch.device(device))
-
-    if device != "cpu":
-        model = DataParallel(model)
-
+    if rank is None:
+        model.to(torch.device(device))
+        # if device != "cpu":
+        #     model = DataParallel(model)
+    else:
+        model.to(rank)
+        model = DDP(model, device_ids=[rank], output_device=rank)
     # construct an optimizer
     params = [p for p in model.parameters()
               if p.requires_grad]
-
     optimizer = SGD(
         params,
         lr=learning_rate,
         momentum=optimizer_momentum,
         weight_decay=optimizer_weight_decay
     )
-
     # and a learning rate scheduler
     lr_scheduler = StepLR(
         optimizer,
         step_size=step_size,
         gamma=scheduler_gamma
     )
-    
     print("Model created!")
-
     return model, optimizer, lr_scheduler
 
-
-def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int):
+def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int, rank = None, world_size = None):
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
@@ -247,10 +253,11 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
         
         # set up device
         device = "cuda" if torch.cuda.is_available() else "cpu"
-                
-        print(f"Using {device} device")
-        
-        save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
+           
+        if rank == 0:     
+            print(f"Using {device} device")
+            save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
+        dist.barrier()
 
         start_time = time.time()
 
@@ -262,14 +269,14 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
                 eval_results[fold] = {}
 
             (train_dataloader, val_dataloader) = get_dataloaders(
-                train_data, val_data, batch_size)
+                train_data, val_data, batch_size, rank=rank, world_size=world_size)
 
-            model, optimizer, lr_scheduler = setup_fold(
-                args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
+            model, optimizer, lr_scheduler = setup_fold(args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma, rank)
 
             for epoch in range(num_epochs):
+                
                 trained_results[fold][epoch] = ref_train(
-                    model=model, optimizer=optimizer, train_data_loader=train_dataloader, device=device, epoch=epoch)
+                    model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch, rank=rank)
                 lr_scheduler.step()
 
                 # evaluate on the validation dataset
@@ -278,15 +285,19 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
                 eval_results[fold][epoch] = validation_result
             
         total_time = time.time() - start_time
-        print(f"Entire run took {total_time}s")
-        
-        save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})    
-        make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
+        if rank == 0:
+            print(f"Entire run took {total_time}s")
+            
+            save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})    
+            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
 
 
 ######################
 #   Main Functions   #
 ######################
+
+def cleanup():
+    dist.destroy_process_group()
 
 
 def parse_args():
@@ -327,11 +338,15 @@ def parse_args():
     return args
 
 
-def main():
+def run(rank, world_size):
     print("Starting...")
+    
+    # create default process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
     args = parse_args()
 
-    set_seeds()
+    set_seeds(rank)
 
     hyperparameters = [(batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay)
                        for batch_size in args.batch_size
@@ -348,8 +363,18 @@ def main():
 
     (fold_data, test_data) = get_data(
         img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
-    train_with_folds(args, hyperparameters, fold_data, channels, num_folds)
+    train_with_folds(args, hyperparameters, fold_data, channels, num_folds, rank)
+    cleanup()
+
+def main():
+    world_size = 3
+    mp.spawn(run,
+        args=(world_size,),
+        nprocs=world_size,
+        join=True)
 
 
 if __name__ == "__main__":
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
     main()
