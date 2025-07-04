@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader, Subset, DistributedSampler
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
 from torchvision.transforms import v2 as T
+from torch.distributed.elastic.multiprocessing.errors import record
 
 from models.fast_rcnn import FasterRCNNResNet101
 from data_parsing.dataloader import PrivetDataset, PrivetWrappedDataset
@@ -245,6 +246,7 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
     return model, optimizer, lr_scheduler
 
 def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int, rank = None, world_size = None):
+    rank = int(os.environ["LOCAL_RANK"])
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
@@ -337,9 +339,14 @@ def parse_args():
 
     return args
 
-
-def run(rank, world_size):
+@record
+def main():
     print("Starting...")
+    
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    print(f"Rank: {rank} | WS: {world_size} | Local Rank: {local_rank}")
     
     # create default process group
     dist.init_process_group("nccl", rank=rank, world_size=world_size, init_method="env://")
@@ -364,14 +371,8 @@ def run(rank, world_size):
     (fold_data, test_data) = get_data(
         img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
     train_with_folds(args, hyperparameters, fold_data, channels, num_folds, rank)
+    
     cleanup()
-
-def main():
-    world_size = 3
-    mp.spawn(run,
-        args=(world_size,),
-        nprocs=world_size,
-        join=True)
 
 
 if __name__ == "__main__":
