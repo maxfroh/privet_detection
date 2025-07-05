@@ -30,8 +30,8 @@ class PrivetDataset(Dataset):
         self.labels_dir = labels_dir
         self.is_multispectral = is_multispectral
         self.transform = transform
-        self.img_locs: dict[int, str] = {}
-        self.labels_locs: dict[int, str] = {}
+        self.imgs: dict[int, Tensor] = {}
+        self.labels: dict[int, list[str]] = {}
         self.classes: dict[int, str] = {}
 
         self.info = {"name": "PrivetDataset", "img_dir": img_dir, "labels_dir": labels_dir, "is_ms": is_multispectral}
@@ -41,12 +41,12 @@ class PrivetDataset(Dataset):
             # skip the img_dir folder itself
             if dirpath == img_dir:
                 continue 
-            
+
             classes = {}
-            
+
             # get the name of the folder containing the images (ex: Llela1c)
             terminal_dir = os.path.split(dirpath)[1]
-            
+
             # get the class file for that set and extract the classes
             with open(os.path.join(labels_dir, terminal_dir, "classes.txt"), mode="r", encoding="utf-8") as class_file:
                 class_num = 1
@@ -54,7 +54,7 @@ class PrivetDataset(Dataset):
                     class_name = self._convert_line_to_uniform_class(line)
                     classes[class_num] = class_name
                     class_num += 1
-            
+
             # get the image/tensor representing the image
             for filename in filenames:
                 if ".TIF" in filename: 
@@ -62,14 +62,21 @@ class PrivetDataset(Dataset):
                 img_loc = os.path.join(dirpath, filename)
                 if self.is_multispectral:
                     extension = ".JPG.pt"
+                    image = torch.load(img_loc)
                 else:
                     extension = ".JPG"
-                self.img_locs[idx] = img_loc                    
+                    image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
+                self.imgs[idx] = image                    
 
                 labels_filename = filename.replace(extension, ".txt")
                 labels_loc = os.path.join(
                     labels_dir, terminal_dir, labels_filename)
-                self.labels_locs[idx] = labels_loc
+                try:
+                    with open(labels_loc, mode="r", encoding="utf-8") as lf:
+                        lines = lf.readlines()
+                except:
+                    lines = []
+                self.labels[idx] = lines
                 self.classes[idx] = classes
                 idx += 1
 
@@ -89,12 +96,12 @@ class PrivetDataset(Dataset):
 
     def get_is_multispectral(self):
         return self.is_multispectral
-    
+
     def get_class_name(self, label: int) -> str:
         return self.classes[0][label]
 
     def __len__(self):
-        return len(self.img_locs)
+        return len(self.imgs)
 
     def _calculate_coords(self, hi: int, wi: int, cx: float, cy: float, hb: float, wb: float) -> tuple[float, float, float, float]:
         """
@@ -117,24 +124,14 @@ class PrivetDataset(Dataset):
         return (xmin, ymin, xmax, ymax)
 
     def __getitem__(self, idx) -> tuple[Image, dict]:
-        img_loc = self.img_locs[idx]
-        labels_loc = self.labels_locs[idx]
-
-        if self.is_multispectral:
-            image = torch.load(img_loc)
-        else:
-            image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
+        image = self.imgs[idx]
         if self.transform:
             image = self.transform(image)
 
         # Get bounding boxes and labels
         H = image.shape[1]
         W = image.shape[2]
-        try:
-            with open(labels_loc, mode="r", encoding="utf-8") as lf:
-                lines = lf.readlines()
-        except:
-            lines = []        
+        lines = self.labels[idx]
 
         N = len(lines)
         labels = torch.zeros((N), dtype=torch.int64)
