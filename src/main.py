@@ -275,16 +275,22 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
 
             model, optimizer, lr_scheduler = setup_fold(args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma, rank)
 
+            print(f"Rank {rank} alloc: {torch.cuda.memory_allocated()/1e9:.2f} res: {torch.cuda.memory_reserved()/1e9:.2f}")
+
             for epoch in range(num_epochs):
                 
                 trained_results[fold][epoch] = ref_train(
                     model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch, rank=rank)
                 lr_scheduler.step()
+                print(f"Rank {rank} alloc: {torch.cuda.memory_allocated()/1e9:.2f} res: {torch.cuda.memory_reserved()/1e9:.2f}")
 
                 # evaluate on the validation dataset
                 validation_result = evaluate(
                     model, val_dataloader, device=device)
                 eval_results[fold][epoch] = validation_result
+            
+            del model
+            torch.cuda.empty_cache()
             
         total_time = time.time() - start_time
         if rank == 0:
