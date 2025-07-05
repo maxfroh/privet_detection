@@ -30,8 +30,8 @@ class PrivetDataset(Dataset):
         self.labels_dir = labels_dir
         self.is_multispectral = is_multispectral
         self.transform = transform
-        self.imgs: dict[int, Tensor] = {}
-        self.labels: dict[int, list[str]] = {}
+        self.img_locs: dict[int, str] = {}
+        self.labels_locs: dict[int, str] = {}
         self.classes: dict[int, str] = {}
 
         self.info = {"name": "PrivetDataset", "img_dir": img_dir, "labels_dir": labels_dir, "is_ms": is_multispectral}
@@ -62,21 +62,14 @@ class PrivetDataset(Dataset):
                 img_loc = os.path.join(dirpath, filename)
                 if self.is_multispectral:
                     extension = ".JPG.pt"
-                    image = torch.load(img_loc)
                 else:
                     extension = ".JPG"
-                    image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
-                self.imgs[idx] = image                    
+                self.img_locs[idx] = img_loc                    
 
                 labels_filename = filename.replace(extension, ".txt")
                 labels_loc = os.path.join(
                     labels_dir, terminal_dir, labels_filename)
-                try:
-                    with open(labels_loc, mode="r", encoding="utf-8") as lf:
-                        lines = lf.readlines()
-                except:
-                    lines = []
-                self.labels[idx] = lines
+                self.labels_locs[idx] = labels_loc
                 self.classes[idx] = classes
                 idx += 1
 
@@ -124,14 +117,24 @@ class PrivetDataset(Dataset):
         return (xmin, ymin, xmax, ymax)
 
     def __getitem__(self, idx) -> tuple[Image, dict]:
-        image = self.imgs[idx]
+        img_loc = self.img_locs[idx]
+        labels_loc = self.labels_locs[idx]
+
+        if self.is_multispectral:
+            image = torch.load(img_loc)
+        else:
+            image = decode_image(img_loc) / torch.iinfo(torch.uint8).max
         if self.transform:
             image = self.transform(image)
 
         # Get bounding boxes and labels
         H = image.shape[1]
         W = image.shape[2]
-        lines = self.labels[idx]
+        try:
+            with open(labels_loc, mode="r", encoding="utf-8") as lf:
+                lines = lf.readlines()
+        except:
+            lines = []        
 
         N = len(lines)
         labels = torch.zeros((N), dtype=torch.int64)

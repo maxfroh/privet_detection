@@ -118,7 +118,7 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
     return (fold_data, test_data)
 
 
-def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE, rank = None, world_size = None) -> tuple[DataLoader, DataLoader]:
+def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE, rank = None, world_size = None) -> tuple[DataLoader, DataLoader]:    
     if rank is not None:
         train_sampler = DistributedSampler(train_data, num_replicas=world_size, rank=rank, shuffle=True)
         val_sampler = DistributedSampler(val_data, num_replicas=world_size, rank=rank, shuffle=False)
@@ -127,9 +127,11 @@ def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SI
         val_sampler = None
     
     train_dataloader = DataLoader(
-        dataset=train_data, batch_size=batch_size, shuffle=(train_sampler is None), sampler=train_sampler, collate_fn=collate_fn, pin_memory=True)
+        dataset=train_data, batch_size=batch_size, shuffle=(train_sampler is None), 
+        sampler=train_sampler, collate_fn=collate_fn, pin_memory=True)
     val_dataloader = DataLoader(
-        dataset=val_data, batch_size=batch_size, shuffle=False, sampler=val_sampler, collate_fn=collate_fn, pin_memory=True)
+        dataset=val_data, batch_size=batch_size, shuffle=False, sampler=val_sampler, 
+        collate_fn=collate_fn, pin_memory=True)
     return (train_dataloader, val_dataloader)
 
 
