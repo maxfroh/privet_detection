@@ -152,7 +152,7 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, val_data: D
             boxed_img = draw_bounding_boxes((image_cpu * 255).byte().squeeze(0),
                                             boxes, labels=label_strings, 
                                             colors=colors, width=4, font_size=60,
-                                            font="./resources/ARIAL.TTF", label_colors="white")
+                                            font=f"{os.environ["SCRATCH"]}/privet_detection/src/data_parsing/resources/ARIAL.TTF", label_colors="white")
 
             group_imgs[has_threshold].append(boxed_img)
 
@@ -173,6 +173,7 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, val_data: D
 
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"val_boxes_{'thr' if has_threshold else 'no_thr'}.jpg"))
+    plt.close()
 
 
 def plot_folds_epochs(fold_dict: dict[int, list[float]], *, title: str, y_label: str, x_label: str = "Epoch", figname: str, save_dir: Union[str, PathLike], thicken: bool = False):
@@ -191,6 +192,7 @@ def plot_folds_epochs(fold_dict: dict[int, list[float]], *, title: str, y_label:
     
     plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
     plt.savefig(os.path.join(save_dir, figname), dpi=300, bbox_inches="tight")
+    plt.close()
    
     
 def plot_folds_epochs_multiple(fold_dicts: list[dict[int, list[float]]], labels: list[str], title: str, y_label: str, figname: str, save_dir: Union[str, PathLike], thicken: list[bool] = None):
@@ -212,6 +214,7 @@ def plot_folds_epochs_multiple(fold_dicts: list[dict[int, list[float]]], labels:
     
     plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
     plt.savefig(os.path.join(save_dir, figname), dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def make_lr(save_dir: Union[str, PathLike], trained_results: dict[int, dict[int, MetricLogger]]):
@@ -228,6 +231,7 @@ def make_lr(save_dir: Union[str, PathLike], trained_results: dict[int, dict[int,
     plt.grid()
 
     plt.savefig(os.path.join(save_dir, "lr.png"), dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def make_loss(save_dir: Union[str, PathLike], train_results: dict[int, dict[int, MetricLogger]]):
@@ -271,6 +275,7 @@ def make_loss(save_dir: Union[str, PathLike], train_results: dict[int, dict[int,
 
     plt.savefig(os.path.join(save_dir, f"loss.png"),
                 dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def make_map(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
@@ -359,6 +364,7 @@ def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
     
     plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
     plt.savefig(os.path.join(save_dir, "pr.png"), dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]): #, model: Module, device: str, val_data: DataLoader):
@@ -433,6 +439,7 @@ def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
     
     plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
     plt.savefig(os.path.join(save_dir, "f1.png"), dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 ######################

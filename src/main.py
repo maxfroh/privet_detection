@@ -277,14 +277,11 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
 
             model, optimizer, lr_scheduler = setup_fold(args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma, rank)
 
-            print(f"Rank {rank} alloc: {torch.cuda.memory_allocated()/1e9:.2f} res: {torch.cuda.memory_reserved()/1e9:.2f}")
-
             for epoch in range(num_epochs):
                 
                 trained_results[fold][epoch] = ref_train(
                     model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch, rank=rank)
                 lr_scheduler.step()
-                print(f"Rank {rank} alloc: {torch.cuda.memory_allocated()/1e9:.2f} res: {torch.cuda.memory_reserved()/1e9:.2f}")
 
                 # evaluate on the validation dataset
                 validation_result = evaluate(
@@ -380,11 +377,12 @@ def main():
     channels = args.channels
     num_folds = args.kfold
 
-    (fold_data, test_data) = get_data(
-        img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
-    train_with_folds(args, hyperparameters, fold_data, channels, num_folds, rank)
-    
-    cleanup()
+    try:
+        (fold_data, test_data) = get_data(
+            img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
+        train_with_folds(args, hyperparameters, fold_data, channels, num_folds, rank)
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":
