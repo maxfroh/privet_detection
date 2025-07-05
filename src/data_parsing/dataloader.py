@@ -94,7 +94,7 @@ class PrivetDataset(Dataset):
         return self.classes[0][label]
 
     def __len__(self):
-        return len(self.imgs)
+        return len(self.img_locs)
 
     def _calculate_coords(self, hi: int, wi: int, cx: float, cy: float, hb: float, wb: float) -> tuple[float, float, float, float]:
         """
