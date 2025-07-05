@@ -95,7 +95,7 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
                             is_multispectral=is_multispectral)
 
     fold_data: dict[int, tuple[Data, Data]] = {}
-    idxs = np.random.permutation(range(len(dataset) // 5))
+    idxs = np.random.permutation(range(len(dataset)))
 
     train_transform = get_transforms(train=True)
     test_transform = get_transforms(train=False)
