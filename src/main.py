@@ -291,15 +291,19 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
                     model, val_dataloader, device=device)
                 eval_results[fold][epoch] = validation_result
             
-            del model
-            torch.cuda.empty_cache()
+            if rank != 0 and fold != len(fold_data) - 1:
+                del model
+                torch.cuda.empty_cache()
             
         total_time = time.time() - start_time
         if rank == 0:
             print(f"Entire run took {total_time}s")
             
             save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})    
-            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
+            if model is not None:
+                make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
+            else:
+                make_graphs_and_vis(save_dir, trained_results, eval_results, val_data)
 
 
 ######################

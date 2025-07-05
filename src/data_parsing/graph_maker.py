@@ -458,14 +458,15 @@ def make_graphs(save_dir: Union[str, PathLike], trained_results: dict, eval_resu
     print("Done")
 
 
-def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eval_results: dict, val_data: DataLoader, model: Module, device):
+def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eval_results: dict, val_data: DataLoader, model: Module = None, device = None):
     save_dir = os.path.join(save_dir, "figures")
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
     make_graphs(save_dir, train_results, eval_results)
     make_f1(save_dir, eval_results)
-    visualize(save_dir, model, device, val_data)
+    if model is not None:
+        visualize(save_dir, model, device, val_data)
 
 ######################
 #                    #
