@@ -152,7 +152,7 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, val_data: D
             boxed_img = draw_bounding_boxes((image_cpu * 255).byte().squeeze(0),
                                             boxes, labels=label_strings, 
                                             colors=colors, width=4, font_size=60,
-                                            font=f"{os.environ["SCRATCH"]}/privet_detection/src/data_parsing/resources/ARIAL.TTF", label_colors="white")
+                                            font=f"{os.environ['SCRATCH']}/privet_detection/src/data_parsing/resources/ARIAL.TTF", label_colors="white")
 
             group_imgs[has_threshold].append(boxed_img)
 
