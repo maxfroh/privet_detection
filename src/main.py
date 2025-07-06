@@ -56,10 +56,11 @@ SAVE_MODELS_N = 3
 
 
 def set_seeds(rank = 0):
-    random.seed(RAND_SEED)
-    np.random.seed(RAND_SEED)
-    torch.cuda.manual_seed_all(RAND_SEED)
-    torch.random.manual_seed(RAND_SEED + rank)
+    seed = RAND_SEED + rank
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.random.manual_seed(seed)
 
 
 def get_model(model: str, num_channels: int) -> torch.nn.Module:
@@ -130,7 +131,7 @@ def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SI
         dataset=train_data, batch_size=batch_size, shuffle=(train_sampler is None), 
         sampler=train_sampler, collate_fn=collate_fn, pin_memory=True)
     val_dataloader = DataLoader(
-        dataset=val_data, batch_size=batch_size, shuffle=False, sampler=val_sampler, 
+        dataset=val_data, batch_size=batch_size, shuffle=False,
         collate_fn=collate_fn, pin_memory=True)
     return (train_dataloader, val_dataloader)
 
@@ -224,8 +225,6 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
         model_name, num_channels=num_channels)
     if rank is None:
         model.to(torch.device(device))
-        # if device != "cpu":
-        #     model = DataParallel(model)
     else:
         model.to(rank)
         model = DDP(model, device_ids=[rank], output_device=rank)
@@ -254,9 +253,10 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
         eval_results = {}
         model = None
         val_data = None
+        save_dir = ""
         
         # set up device
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = rank
            
         if rank == 0:     
             print(f"Using {device} device")
@@ -279,19 +279,24 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
 
             for epoch in range(num_epochs):
                 
-                trained_results[fold][epoch] = ref_train(
+                trained_result = ref_train(
                     model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch, rank=rank)
+                if rank == 0:
+                    trained_results[fold][epoch] = trained_result
                 lr_scheduler.step()
 
-                # evaluate on the validation dataset
-                validation_result = evaluate(
-                    model, val_dataloader, device=device)
-                eval_results[fold][epoch] = validation_result
+                dist.barrier()
+                if rank == 0:
+                    # evaluate on the validation dataset
+                    validation_result = evaluate(
+                        model, val_dataloader, device=device)
+                    eval_results[fold][epoch] = validation_result
             
             if rank != 0 and fold != len(fold_data) - 1:
                 del model
                 torch.cuda.empty_cache()
             
+        dist.barrier()
         total_time = time.time() - start_time
         if rank == 0:
             print(f"Entire run took {total_time}s")
