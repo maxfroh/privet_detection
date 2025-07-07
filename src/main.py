@@ -286,11 +286,13 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
                 lr_scheduler.step()
 
                 dist.barrier()
+                # evaluate on the validation dataset
+                validation_result = evaluate(
+                    model, val_dataloader, device=device)
                 if rank == 0:
-                    # evaluate on the validation dataset
-                    validation_result = evaluate(
-                        model, val_dataloader, device=device)
                     eval_results[fold][epoch] = validation_result
+                
+                dist.barrier()
             
             if rank != 0 and fold != len(fold_data) - 1:
                 del model
