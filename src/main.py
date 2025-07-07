@@ -22,14 +22,10 @@ from typing import Union
 
 import torch
 import torch.multiprocessing as mp
-import torch.distributed as dist
-from torch.nn import DataParallel
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, Subset, DistributedSampler
+from torch.utils.data import DataLoader, Subset
 from torch.optim import Optimizer, SGD
 from torch.optim.lr_scheduler import LRScheduler, StepLR
 from torchvision.transforms import v2 as T
-from torch.distributed.elastic.multiprocessing.errors import record
 
 from models.fast_rcnn import FasterRCNNResNet101
 from data_parsing.dataloader import PrivetDataset, PrivetWrappedDataset
@@ -55,8 +51,8 @@ SAVE_MODELS_N = 3
 ######################
 
 
-def set_seeds(rank = 0):
-    seed = RAND_SEED + rank
+def set_seeds():
+    seed = RAND_SEED
     random.seed(seed)
     np.random.seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -119,17 +115,10 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
     return (fold_data, test_data)
 
 
-def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE, rank = None, world_size = None) -> tuple[DataLoader, DataLoader]:    
-    if rank is not None:
-        train_sampler = DistributedSampler(train_data, num_replicas=world_size, rank=rank, shuffle=True)
-        val_sampler = DistributedSampler(val_data, num_replicas=world_size, rank=rank, shuffle=False)
-    else:
-        train_sampler = None
-        val_sampler = None
-    
+def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE) -> tuple[DataLoader, DataLoader]:    
     train_dataloader = DataLoader(
-        dataset=train_data, batch_size=batch_size, shuffle=(train_sampler is None), 
-        sampler=train_sampler, collate_fn=collate_fn, pin_memory=True)
+        dataset=train_data, batch_size=batch_size, shuffle=True, 
+        collate_fn=collate_fn, pin_memory=True)
     val_dataloader = DataLoader(
         dataset=val_data, batch_size=batch_size, shuffle=False,
         collate_fn=collate_fn, pin_memory=True)
@@ -208,26 +197,18 @@ def get_class_name(label: torch.Tensor):
     return {1: "privet", 2: "yew", 3: "path"}[label.item()]
 
 
-def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_dataloader: DataLoader, device, epoch, rank=None):
-    if hasattr(train_dataloader.sampler, "set_epoch"):
-        train_dataloader.sampler.set_epoch(epoch)
+def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_dataloader: DataLoader, device, epoch):
     result = train_one_epoch(
         model, optimizer, train_dataloader, device, epoch, print_freq=10)
     return result
 
 
-def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float, rank = None):
-    torch.cuda.set_device(rank)
-    
+def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float):
     # set up model
     num_channels = 3 if channels == "rgb" else 14
     model = get_model(
         model_name, num_channels=num_channels)
-    if rank is None:
-        model.to(torch.device(device))
-    else:
-        model.to(rank)
-        model = DDP(model, device_ids=[rank], output_device=rank)
+    model.to(device)
     # construct an optimizer
     params = [p for p in model.parameters()
               if p.requires_grad]
@@ -247,7 +228,6 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
     return model, optimizer, lr_scheduler
 
 def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int, rank = None, world_size = None):
-    rank = int(os.environ["LOCAL_RANK"])
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
@@ -256,12 +236,10 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
         save_dir = ""
         
         # set up device
-        device = rank
+        device = "cuda" if torch.cuda.is_available() else "cpu"
            
-        if rank == 0:     
-            print(f"Using {device} device")
-            save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
-        dist.barrier()
+        print(f"Using {device} device")
+        save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, num_folds)
 
         start_time = time.time()
 
@@ -285,36 +263,24 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
                     trained_results[fold][epoch] = trained_result
                 lr_scheduler.step()
 
-                dist.barrier()
-                if rank == 0:
-                    # evaluate on the validation dataset
-                    validation_result = evaluate(
-                        model, val_dataloader, device=device)
-                    eval_results[fold][epoch] = validation_result
+                # evaluate on the validation dataset
+                validation_result = evaluate(
+                    model, val_dataloader, device=device)
+                eval_results[fold][epoch] = validation_result
             
-            if rank != 0 and fold != len(fold_data) - 1:
-                del model
-                torch.cuda.empty_cache()
-            
-        dist.barrier()
         total_time = time.time() - start_time
-        if rank == 0:
-            print(f"Entire run took {total_time}s")
-            
-            save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})    
-            if model is not None:
-                make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
-            else:
-                make_graphs_and_vis(save_dir, trained_results, eval_results, val_data)
+        print(f"Entire run took {total_time}s")
+        
+        save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": train_data, "validation": val_data})    
+        if model is not None:
+            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
+        else:
+            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data)
 
 
 ######################
 #   Main Functions   #
 ######################
-
-def cleanup():
-    dist.destroy_process_group()
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -353,21 +319,12 @@ def parse_args():
 
     return args
 
-@record
 def main():
     print("Starting...")
     
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    local_rank = int(os.environ["LOCAL_RANK"])
-    print(f"Rank: {rank} | WS: {world_size} | Local Rank: {local_rank}")
-    
-    # create default process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size, init_method="env://")
-
     args = parse_args()
 
-    set_seeds(rank)
+    set_seeds()
 
     hyperparameters = [(batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay)
                        for batch_size in args.batch_size
@@ -382,12 +339,9 @@ def main():
     channels = args.channels
     num_folds = args.kfold
 
-    try:
-        (fold_data, test_data) = get_data(
-            img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
-        train_with_folds(args, hyperparameters, fold_data, channels, num_folds, rank)
-    finally:
-        cleanup()
+    (fold_data, test_data) = get_data(
+        img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
+    train_with_folds(args, hyperparameters, fold_data, channels, num_folds)
 
 
 if __name__ == "__main__":
