@@ -227,7 +227,7 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
     print("Model created!")
     return model, optimizer, lr_scheduler
 
-def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int, rank = None, world_size = None):
+def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int):
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
@@ -251,16 +251,15 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
                 eval_results[fold] = {}
 
             (train_dataloader, val_dataloader) = get_dataloaders(
-                train_data, val_data, batch_size, rank=rank, world_size=world_size)
+                train_data, val_data, batch_size)
 
-            model, optimizer, lr_scheduler = setup_fold(args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma, rank)
+            model, optimizer, lr_scheduler = setup_fold(args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
 
             for epoch in range(num_epochs):
                 
                 trained_result = ref_train(
-                    model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch, rank=rank)
-                if rank == 0:
-                    trained_results[fold][epoch] = trained_result
+                    model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch)
+                trained_results[fold][epoch] = trained_result
                 lr_scheduler.step()
 
                 # evaluate on the validation dataset
