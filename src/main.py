@@ -388,6 +388,8 @@ def parse_args():
     parser.add_argument("--kfold", type=int, default=1)
     parser.add_argument("--save_n_models", type=int, default=SAVE_MODELS_N,
                         help="How many best models to save per fold")
+    parser.add_argument("--train", type=bool, default=True,
+                        help="Whether this code should be run in training mode or not")
 
     args = parser.parse_args()
 
