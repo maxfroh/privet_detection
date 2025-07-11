@@ -115,6 +115,35 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
     return (fold_data, test_data)
 
 
+def get_final_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], channels: str, batch_size: int = BATCH_SIZE, num_folds: int = 1) -> tuple[Data, Data]:
+    is_multispectral = True if channels == "all" else False
+
+    g = torch.Generator()
+    g.manual_seed(RAND_SEED)
+
+    dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
+                            is_multispectral=is_multispectral)
+
+    fold_data: dict[int, tuple[Data, Data]] = {}
+    idxs = np.random.permutation(range(len(dataset)))
+
+    train_transform = get_transforms(train=True)
+    test_transform = get_transforms(train=False)
+
+    test_idx = len(dataset) - int(len(dataset) * 0.2)
+    test_idxs = idxs[test_idx:]
+    test_data = PrivetWrappedDataset(Subset(dataset=dataset, indices=test_idxs), test_transform)
+
+    train_idxs = idxs[:test_idx]
+    full_train_data = Subset(dataset=dataset, indices=train_idxs)
+
+    fold = KFold(n_splits=num_folds, shuffle=True, random_state=RAND_SEED)
+
+    training_data = PrivetWrappedDataset(full_train_data, train_transform)
+
+    return (training_data, test_data)
+
+
 def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE) -> tuple[DataLoader, DataLoader]:    
     train_dataloader = DataLoader(
         dataset=train_data, batch_size=batch_size, shuffle=True, 
@@ -277,6 +306,52 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
             make_graphs_and_vis(save_dir, trained_results, eval_results, val_data)
 
 
+def train_final(args, hyperparameters: list[Union[int, float]], data: tuple[Data, Data], channels: str):
+    for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
+        trained_results = {}
+        eval_results = {}
+        model = None
+        val_data = None
+        save_dir = ""
+        
+        # set up device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+           
+        print(f"Using {device} device")
+        save_dir = get_save_dir(args.results_dir, num_epochs, batch_size, learning_rate, 0)
+
+        start_time = time.time()
+
+        trained_results = {0:{}}
+        eval_results = {0: {}}
+
+        (train_dataloader, val_dataloader) = get_dataloaders(
+            data[0], data[1], batch_size)
+
+        model, optimizer, lr_scheduler = setup_fold(args.model, device, channels, batch_size, learning_rate, optimizer_momentum, optimizer_weight_decay, step_size, scheduler_gamma)
+
+        for epoch in range(num_epochs):
+            
+            trained_result = ref_train(
+                model=model, optimizer=optimizer, train_dataloader=train_dataloader, device=device, epoch=epoch)
+            trained_results[0][epoch] = trained_result
+            lr_scheduler.step()
+
+            # evaluate on the validation dataset
+            validation_result = evaluate(
+                model, val_dataloader, device=device)
+            eval_results[0][epoch] = validation_result
+        
+        total_time = time.time() - start_time
+        print(f"Entire run took {total_time}s")
+        
+        save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": data[0], "validation": data[1]})    
+        if model is not None:
+            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
+        else:
+            make_graphs_and_vis(save_dir, trained_results, eval_results, val_data)
+
+
 ######################
 #   Main Functions   #
 ######################
@@ -338,9 +413,13 @@ def main():
     channels = args.channels
     num_folds = args.kfold
 
-    (fold_data, test_data) = get_data(
-        img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
-    train_with_folds(args, hyperparameters, fold_data, channels, num_folds)
+    if args.train:
+        (fold_data, test_data) = get_data(
+            img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
+        train_with_folds(args, hyperparameters, fold_data, channels, num_folds)
+    else:
+        data = get_final_data(img_dir=img_dir, labels_dir=labels_dir, channels=channels)
+        train_final(args, hyperparameters, data, channels, num_folds)
 
 
 if __name__ == "__main__":

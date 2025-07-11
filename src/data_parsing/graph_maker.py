@@ -12,6 +12,7 @@ from pathlib import Path
 from collections import defaultdict, deque
 from operator import itemgetter
 from typing import Union
+from sklearn.metrics import auc
 
 import torch
 from torch.nn import Module
@@ -103,11 +104,13 @@ def get_best_model(save_dir, best_models):
     return model
 
 
-def calc_f1(P: float, R: float) -> float:
-    # F1 = (2 * P * R) / (P + R)
+def calc_f1(tp: float, fp: float, gt) -> float:
+    # gt = fp + fn
     epsilon = 1e-10
-    return (2 * P * R) / (P + R + epsilon)
-
+    P = tp / (fp + tp + epsilon)
+    R = tp / (gt + epsilon)
+    F1 = (2 * P * R) / (P + R + epsilon)
+    return F1
 
 ######################
 #                    #
@@ -174,6 +177,8 @@ def visualize(save_dir: Union[str, PathLike], model: Module, device, val_data: D
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"val_boxes_{'thr' if has_threshold else 'no_thr'}.jpg"))
     plt.close()
+    
+    print("\tVisualization completed.")
 
 
 def plot_folds_epochs(fold_dict: dict[int, list[float]], *, title: str, y_label: str, x_label: str = "Epoch", figname: str, save_dir: Union[str, PathLike], thicken: bool = False):
@@ -202,8 +207,9 @@ def plot_folds_epochs_multiple(fold_dicts: list[dict[int, list[float]]], labels:
         avg_values = np.mean(list(fold_dicts[i].values()), axis=0)
         std_values = np.std(list(fold_dicts[i].values()), axis=0)
         
+        max_idx = np.argmax(avg_values)
         thicken_line = False if thicken is None or len(thicken) == 0 else thicken[i]
-        plt.plot(range(len(avg_values)), avg_values, label=f"{labels[i]}", lw=4 if thicken_line else 2)
+        plt.plot(range(len(avg_values)), avg_values, label=f"{labels[i]} | {avg_values[max_idx]:.4f} at {range(len(avg_values))[max_idx]}", lw=4 if thicken_line else 2)
         plt.fill_between(range(len(avg_values)), avg_values - std_values, avg_values + std_values, alpha=0.25)
         
     plt.title(title)
@@ -325,7 +331,6 @@ def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
 
     # ["recall"] = TxKxAxM
 
-
     # precisions = FxRxK
     # recalls = FxK
     best_epoch = np.argmax(np.mean([[eval_results[fold][e].coco_eval["bbox"].stats[0] for e in range(len(eval_results[0]))] for fold in eval_results.keys()], axis=0)).item()
@@ -349,11 +354,11 @@ def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
 
     plt.figure(figsize=(10,6))
     
-    plt.plot(recThrs, avg_prec_mean, label=f"All Classes@0.5", lw=4)
+    plt.plot(recThrs, avg_prec_mean, label=f"All Classes@0.5 | Area: {auc(recThrs, avg_prec_mean):.4f}", lw=4)
     plt.fill_between(recThrs, avg_prec_mean - avg_prec_std, avg_prec_mean + avg_prec_std, alpha=0.25)
-    plt.plot(recThrs, priv_prec_mean, label=f"Chinese Privet@0.5", lw=2)
+    plt.plot(recThrs, priv_prec_mean, label=f"Chinese Privet@0.5 | Area: {auc(recThrs, priv_prec_mean):.4f}", lw=2)
     plt.fill_between(recThrs, priv_prec_mean - priv_prec_std, priv_prec_mean + priv_prec_std, alpha=0.25)
-    plt.plot(recThrs, yew_prec_mean, label=f"Yew@0.5", lw=2)
+    plt.plot(recThrs, yew_prec_mean, label=f"Yew@0.5 | Area: {auc(recThrs, yew_prec_mean):.4f}", lw=2)
     plt.fill_between(recThrs, yew_prec_mean - yew_prec_std, yew_prec_mean + yew_prec_std, alpha=0.25)
 
     plt.title("Precision-Recall Curve")
@@ -368,66 +373,85 @@ def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
 
 
 def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]): #, model: Module, device: str, val_data: DataLoader):
-    # TxRxKxAxM
-    # T = 0-10 [.5:.05:.95] iou thresholds                  => 0/:
-    # R = 101 [0:.01:1] recall thresholds                   => ?
-    # K = 3? # categories                                   => i
-    # A = 4 areas for object (all, small, medium, large)    => 0
-    # M = 3 [1 10 100] max detections threshold             => 2
-    best_epoch = np.argmax(np.mean([[eval_results[fold][e].coco_eval["bbox"].stats[0] for e in range(len(eval_results[0]))] for fold in eval_results.keys()], axis=0)).item()
     num_folds = len(eval_results)
-    confidence_thrs = np.linspace(0.0, 1.0, 1001)
+    num_epochs = len(eval_results[0])
+    
+    map_05_array = np.array([[eval_results[fold][e].coco_eval["bbox"].stats[1] for e in range(num_epochs)] for fold in range(num_folds)])
+    best_epochs = [np.argmax(map_05_array[fold]) for fold in range(num_folds)]
+    
+    confidence_thrs = np.linspace(0.0, 1.0, 101)
 
-    f1 = np.zeros((num_folds, confidence_thrs.shape[0]))
-    f1_priv = np.zeros((num_folds, confidence_thrs.shape[0]))
-    f1_yew = np.zeros((num_folds, confidence_thrs.shape[0]))
-    anns = [eval_results[fold][best_epoch].coco_eval["bbox"].cocoDt.anns for fold in range(num_folds)]
-    coco_gt = [eval_results[fold][best_epoch].coco_eval["bbox"].cocoGt for fold in range(num_folds)]
-
+    # priv = 0, yew = 1, overall = 2
+    f1s = np.zeros((3, num_folds, confidence_thrs.shape[0]))
+       
     for fold in range(num_folds):
         for i, threshold in enumerate(confidence_thrs):
-            detections = [detection for detection in anns[fold].values() if detection["score"] >= threshold]
-            if len(detections) == 0:
-                f1[fold][i] = 0
-                f1_priv[fold][i] = 0
-                f1_yew[fold][i] = 0
-            else:
-                new_coco_dt = coco_gt[fold].loadRes(detections)
-                new_coco_eval = COCOeval(cocoGt=coco_gt[fold], cocoDt=new_coco_dt, iouType="bbox")
-                new_coco_eval.evaluate()
-                new_coco_eval.accumulate()
+            eval_imgs = eval_results[fold][best_epochs[fold]].coco_eval["bbox"].evalImgs
+            overall_tp = 0
+            priv_tp = 0
+            yew_tp = 0
+            overall_fp = 0
+            priv_fp = 0
+            yew_fp = 0
+            overall_gt = 0
+            priv_gt = 0
+            yew_gt = 0
+            for cat in [1, 2]:  
+                #  dtIds      - [1xD] id for each of the D detections (dt)
+                #  gtIds      - [1xG] id for each of the G ground truths (gt)
+                #  dtMatches  - [TxD] matching gt id at each IoU or 0
+                #  gtMatches  - [TxG] matching dt id at each IoU or 0
+                #  dtScores   - [1xD] confidence of each dt
+                #  gtIgnore   - [1xG] ignore flag for each gt
+                #  dtIgnore   - [TxD] ignore flag for each dt at each IoU                    
+                for eval_img in eval_imgs:
+                    if eval_img is None or eval_img["category_id"] != cat:
+                        continue
+                    dtScores = np.array(eval_img["dtScores"])
+                    dtMatches = np.array(eval_img["dtMatches"])[0]
+                    dtIgnore = np.array(eval_img["dtIgnore"])[0]
+                    gtIgnore = np.array(eval_img["gtIgnore"]).astype(bool)
+                    num_gt = 0 if gtIgnore.size == 0 else np.sum(~gtIgnore)
+                    tp = (dtMatches > 0) & (~dtIgnore) & (dtScores >= threshold)
+                    fp = (dtMatches == 0) & (~dtIgnore) & (dtScores >= threshold)
 
-                # TxRxKxAxM => TxR => (1,)
-                precision = np.mean(new_coco_eval.eval["precision"][:, :, :, 0, 2])
-                privet_precision = np.mean(new_coco_eval.eval["precision"][:, :, 0, 0, 2])
-                yew_precision = np.mean(new_coco_eval.eval["precision"][:, :, 1, 0, 2])
-                # TxKxAxM => T => (1,)
-                recall = np.mean(new_coco_eval.eval["recall"][:, :, 0, 2])
-                privet_recall = np.mean(new_coco_eval.eval["recall"][:, 0, 0, 2])
-                yew_recall = np.mean(new_coco_eval.eval["recall"][:, 1, 0, 2])
+                    if cat == 1:
+                        priv_tp += np.sum(tp)
+                        priv_fp += np.sum(fp)
+                        priv_gt += num_gt
+                    elif cat == 2:
+                        yew_tp += np.sum(tp)
+                        yew_fp += np.sum(fp)
+                        yew_gt += num_gt
+                                    
+            overall_tp += np.sum(priv_tp) + np.sum(yew_tp)
+            overall_fp += np.sum(priv_fp) + np.sum(yew_fp)
+            overall_gt += np.sum(priv_gt) + np.sum(yew_gt)            
+                
+            f1s[0][fold][i] = calc_f1(overall_tp, overall_fp, overall_gt)
+            f1s[1][fold][i] = calc_f1(priv_tp, priv_fp, priv_gt)
+            f1s[2][fold][i] = calc_f1(yew_tp, yew_fp, yew_gt)
+                    
+    avg_f1_mean = np.mean(f1s[0, :, :], axis=0)
+    avg_f1_std = np.std(f1s[0, :, :], axis=0)
+    priv_f1_mean = np.mean(f1s[1, :, :], axis=0)
+    priv_f1_std = np.std(f1s[1, :, :], axis=0)
+    yew_f1_mean = np.mean(f1s[2, :, :], axis=0)
+    yew_f1_std = np.std(f1s[2, :, :], axis=0)
 
-                f1[fold][i] = calc_f1(precision, recall)
-                f1_priv[fold][i] = calc_f1(privet_precision, privet_recall)
-                f1_yew[fold][i] = calc_f1(yew_precision, yew_recall)
-    
-    avg_f1_mean = np.mean(f1, axis=0)
-    avg_f1_std = np.std(f1, axis=0)
-    priv_f1_mean = np.mean(f1_priv, axis=0)
-    priv_f1_std = np.std(f1_priv, axis=0)
-    yew_f1_mean = np.mean(f1_yew, axis=0)
-    yew_f1_std = np.std(f1_yew, axis=0)
-
-    max_idx = np.argmax(avg_f1_mean)
 
     plt.figure(figsize=(10,6))
     
-    plt.plot(confidence_thrs, avg_f1_mean, label=f"All Classes F1-Score | {avg_f1_mean[max_idx]:.4f} at {confidence_thrs[max_idx]}", lw=4)
+    max_idx = np.argmax(avg_f1_mean)
+    plt.plot(confidence_thrs, avg_f1_mean, label=f"All Classes F1-Score | {avg_f1_mean[max_idx]:.4f} at {confidence_thrs[max_idx]:.2f}", lw=4)
     plt.fill_between(confidence_thrs, avg_f1_mean - avg_f1_std, avg_f1_mean + avg_f1_std, 
                         alpha=0.25)
-    plt.plot(confidence_thrs, priv_f1_mean, label=f"Chinese Privet F1-Score", lw=2)
+    max_idx = np.argmax(priv_f1_mean)
+    plt.plot(confidence_thrs, priv_f1_mean, label=f"Chinese Privet F1-Score | {priv_f1_mean[max_idx]:.4f} at {confidence_thrs[max_idx]:.2f}", lw=2)
     plt.fill_between(confidence_thrs, priv_f1_mean - priv_f1_std, priv_f1_mean + priv_f1_std, 
                         alpha=0.25)
-    plt.plot(confidence_thrs, yew_f1_mean, label=f"Yew F1-Score", lw=2)
+    max_idx = np.argmax(yew_f1_mean)
+    plt.plot(confidence_thrs, yew_f1_mean, label=f"Yew F1-Score | {yew_f1_mean[max_idx]:.4f} at {confidence_thrs[max_idx]:.2f}", lw=2)
     plt.fill_between(confidence_thrs, yew_f1_mean - yew_f1_std, yew_f1_mean + yew_f1_std, 
                         alpha=0.25)
     
@@ -440,7 +464,6 @@ def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
     plt.tight_layout(pad=0.4, w_pad=1.0, h_pad=1.0)
     plt.savefig(os.path.join(save_dir, "f1.png"), dpi=300, bbox_inches="tight")
     plt.close()
-
 
 ######################
 #                    #
@@ -462,7 +485,7 @@ def make_graphs(save_dir: Union[str, PathLike], trained_results: dict, eval_resu
     make_map(save_dir, eval_results)
     make_pr(save_dir, eval_results)
     make_f1(save_dir, eval_results)
-    print("Done")
+    print("\tGraphs completed.")
 
 
 def make_graphs_and_vis(save_dir: Union[str, PathLike], train_results: dict, eval_results: dict, val_data: DataLoader, model: Module = None, device = None):
@@ -519,8 +542,7 @@ def parse_args():
                         help="Which channels to use.\nOptions: {rgb, all}", default="rgb")
     parser.add_argument("--img_dir", help="The outer image directory")
     parser.add_argument("--labels_dir", help="The outer label directory")
-    parser.add_argument(
-        "--save_dir", help="The directory results were saved in")
+    parser.add_argument("--save_dir", nargs="+", help="The directory results were saved in")
 
     args = parser.parse_args()
 
@@ -535,24 +557,29 @@ def main():
     torch.random.manual_seed(RAND_SEED)
     torch.cuda.manual_seed_all(RAND_SEED)
 
-    save_dir = args.save_dir
+    for arg_save_dir in args.save_dir:
+        print("Loading data...")
 
-    trained_results, eval_results = load_results_data(save_dir)
+        trained_results, eval_results = load_results_data(arg_save_dir)
 
-    save_dir = os.path.join(save_dir, "figures")
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
+        save_dir = os.path.join(arg_save_dir, "figures")
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
 
-    make_graphs(save_dir, trained_results, eval_results)
+        print("Starting to make graphs...")
+        make_graphs(save_dir, trained_results, eval_results)
+        # make_f1(save_dir, eval_results)
 
-    # best_models, test_data = setup_visualize(args, save_dir, test_results)
+        # best_models, test_data = setup_visualize(args, save_dir, test_results)
 
-    # visualize(save_dir, best_models, test_data)
-    # states = torch.load("C:/Users/maxos/OneDrive - rit.edu/2245/reu/results/training_out_8b/models/8b_53_of_100e_0.001.pt", weights_only=False)
-    # model = FasterRCNNResNet101(num_channels=3).load_state_dict(states["model_state_dict"])
-    # device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-    
-    # visualize(save_dir, model, device, train_data, val_data)
+        # visualize(save_dir, best_models, test_data)
+        # states = torch.load("C:/Users/maxos/OneDrive - rit.edu/2245/reu/results/training_out_8b/models/8b_53_of_100e_0.001.pt", weights_only=False)
+        # model = FasterRCNNResNet101(num_channels=3).load_state_dict(states["model_state_dict"])
+        # device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+        
+        # visualize(save_dir, model, device, train_data, val_data)
+        print(f"Finished visuals for {os.path.basename(arg_save_dir)}.")
+    print("Done.")
 
 
 if __name__ == "__main__":
