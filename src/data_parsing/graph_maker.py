@@ -241,7 +241,7 @@ def make_lr(save_dir: Union[str, PathLike], trained_results: dict[int, dict[int,
 
 
 def make_loss(save_dir: Union[str, PathLike], train_results: dict[int, dict[int, MetricLogger]]):
-
+    """Plots losses, averaging them over folds."""
     loss_keys = {
         "loss_box_reg": "Box Training Loss",
         "loss_objectness": "Objectness Training Loss",
@@ -285,6 +285,7 @@ def make_loss(save_dir: Union[str, PathLike], train_results: dict[int, dict[int,
 
 
 def make_map(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]):
+    """Plots mAP@0.5 and mAP@0.5:0.95."""
     # TxRxKxAxM
     # T = 0-10 [.5:.05:.95] iou thresholds                  => 0
     # R = 101 [0:.01:1] recall thresholds                   => ?
@@ -335,16 +336,12 @@ def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
     # recalls = FxK
     best_epoch = np.argmax(np.mean([[eval_results[fold][e].coco_eval["bbox"].stats[0] for e in range(len(eval_results[0]))] for fold in eval_results.keys()], axis=0)).item()
     precisions = np.array([eval_results[fold][best_epoch].coco_eval["bbox"].eval["precision"][0, :, :, 0, 2] for fold in eval_results.keys()])
-    # recalls = np.array([eval_results[fold][best_epoch].coco_eval["bbox"].eval["recall"][0, :, 0, 2] for fold in eval_results.keys()])
+
     avg_prec = np.mean(precisions, axis=-1)
     priv_prec = precisions[:, :, 0]
     yew_prec = precisions[:, :, 1]
-    recThrs = eval_results[0][0].coco_eval["bbox"].params.recThrs
-    # avg_rec = np.mean(recalls, axis=-1)
-    # priv_rec = recalls[:, :, 0]
-    # yew_rec = recalls[:, :, 1]
-    
-    # R
+    recThrs = eval_results[0][0].coco_eval["bbox"].params.recThrs    
+
     avg_prec_mean = np.mean(avg_prec, axis=0)
     avg_prec_std = np.std(avg_prec, axis=0)
     priv_prec_mean = np.mean(priv_prec, axis=0)
@@ -373,6 +370,7 @@ def make_pr(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, Co
 
 
 def make_f1(save_dir: Union[str, PathLike], eval_results: dict[int, dict[int, CocoEvaluator]]): #, model: Module, device: str, val_data: DataLoader):
+    """Plots F1-Score curves."""
     num_folds = len(eval_results)
     num_epochs = len(eval_results[0])
     

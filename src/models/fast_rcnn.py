@@ -38,6 +38,7 @@ weights_dict = {
 
 def FasterRCNNResNet101(classes: list[str] = ["background", "privet", "yew"], backbone_model: Callable[..., ResNet] = resnet101, num_channels: int = 3, include_weights: bool = True):
     """
+    Creates a Faster R-CNN with resnet101 backbone.
     """
     num_classes = len(classes)
     

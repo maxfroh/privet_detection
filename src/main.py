@@ -83,6 +83,11 @@ def seed_worker(worker_id):
 
 
 def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], channels: str, batch_size: int = BATCH_SIZE, num_folds: int = 1) -> tuple[dict[int, tuple[Data, Data]], Data]:
+    """
+    Returns data in a train/validation/test split.
+    Train/validation and test is split 80:20.
+    Train and validation are split according to the `num_folds` specified.
+    """
     is_multispectral = True if channels == "all" else False
 
     g = torch.Generator()
@@ -116,6 +121,7 @@ def get_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], ch
 
 
 def get_final_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLike], channels: str, batch_size: int = BATCH_SIZE, num_folds: int = 1) -> tuple[Data, Data]:
+    """Returns data just in a train/test 80:20 split."""
     is_multispectral = True if channels == "all" else False
 
     g = torch.Generator()
@@ -124,7 +130,6 @@ def get_final_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLik
     dataset = PrivetDataset(img_dir=img_dir, labels_dir=labels_dir,
                             is_multispectral=is_multispectral)
 
-    fold_data: dict[int, tuple[Data, Data]] = {}
     idxs = np.random.permutation(range(len(dataset)))
 
     train_transform = get_transforms(train=True)
@@ -133,11 +138,8 @@ def get_final_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLik
     test_idx = len(dataset) - int(len(dataset) * 0.2)
     test_idxs = idxs[test_idx:]
     test_data = PrivetWrappedDataset(Subset(dataset=dataset, indices=test_idxs), test_transform)
-
     train_idxs = idxs[:test_idx]
     full_train_data = Subset(dataset=dataset, indices=train_idxs)
-
-    fold = KFold(n_splits=num_folds, shuffle=True, random_state=RAND_SEED)
 
     training_data = PrivetWrappedDataset(full_train_data, train_transform)
 
@@ -145,6 +147,7 @@ def get_final_data(img_dir: Union[str, PathLike], labels_dir: Union[str, PathLik
 
 
 def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SIZE) -> tuple[DataLoader, DataLoader]:    
+    """Returns the dataloaders for train and test/validation data."""
     train_dataloader = DataLoader(
         dataset=train_data, batch_size=batch_size, shuffle=True, 
         collate_fn=collate_fn, pin_memory=True)
@@ -155,11 +158,16 @@ def get_dataloaders(train_data: Data, val_data: Data, batch_size: int = BATCH_SI
 
 
 def get_test_dataloader(test_data: Data, batch_size: int = BATCH_SIZE) -> DataLoader:
+    """Returns the test dataloader."""
     return DataLoader(
         dataset=test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
 
 
 def get_save_dir(dir: Union[str, PathLike], num_epochs: int, batch_size: int, learning_rate: float, num_folds: int):
+    """
+    Returns the save directory for the current run. 
+    The format is {timestamp}_e{num_epochs}_b{batch_size}_lr{learning_rate}_kf{num_folds}
+    """
     if not os.path.exists(dir):
         os.makedirs(dir)
     cts = time.localtime()
@@ -170,15 +178,21 @@ def get_save_dir(dir: Union[str, PathLike], num_epochs: int, batch_size: int, le
 
 
 def get_model_name(num_epochs: int, batch_size: int, curr_epoch: int, learning_rate: float, fold: int):
+    """
+    Returns the current model's name, {batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}_f{fold},
+    which should be enough to uniquely identify it.
+    """
     return f"{batch_size}b_{curr_epoch}_of_{num_epochs}e_{learning_rate}_f{fold}"
 
 
 def get_model_dir(save_dir: Union[str, PathLike], model_name: str):
+    """Returns the path {save_dir}/models/{model_name}.pt"""
     return os.path.join(save_dir, "models",
                         f"{model_name}.pt")
 
 
 def save_model(model: torch.nn.Module, save_dir: Union[str, PathLike], model_name: str, curr_epoch: int, optimizer: Optimizer, scheduler: LRScheduler, top_n_mAPs: list[tuple[str, float]]):
+    """Saves the model, its optimizer, and its scheduler"""
     if not os.path.exists(os.path.join(save_dir, "models")):
         os.mkdir(os.path.join(save_dir, "models"))
     torch.save(
@@ -222,17 +236,15 @@ def save_results(save_dir: Union[str, PathLike], trained_results: dict[int, dict
 ######################
 
 
-def get_class_name(label: torch.Tensor):
-    return {1: "privet", 2: "yew", 3: "path"}[label.item()]
-
-
 def ref_train(model: torch.nn.Module, optimizer: Optimizer, train_dataloader: DataLoader, device, epoch):
+    """Just a wrapper to call the torchvision references training function."""
     result = train_one_epoch(
         model, optimizer, train_dataloader, device, epoch, print_freq=10)
     return result
 
 
 def setup_fold(model_name: str, device: str, channels: str, batch_size: int, learning_rate: float, optimizer_momentum: float, optimizer_weight_decay: float, step_size: int, scheduler_gamma: float):
+    """Creates the model for training."""
     # set up model
     num_channels = 3 if channels == "rgb" else 14
     model = get_model(
@@ -257,6 +269,7 @@ def setup_fold(model_name: str, device: str, channels: str, batch_size: int, lea
     return model, optimizer, lr_scheduler
 
 def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: dict[int, tuple[Data, Data]], channels: str, num_folds: int):
+    """Trains the model with the k-fold cross-validation data provided."""
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
@@ -307,6 +320,7 @@ def train_with_folds(args, hyperparameters: list[Union[int, float]], fold_data: 
 
 
 def train_final(args, hyperparameters: list[Union[int, float]], data: tuple[Data, Data], channels: str):
+    """Train without any cross-validation."""
     for (batch_size, num_epochs, learning_rate, step_size, scheduler_gamma, optimizer_momentum, optimizer_weight_decay) in hyperparameters:
         trained_results = {}
         eval_results = {}
@@ -337,7 +351,7 @@ def train_final(args, hyperparameters: list[Union[int, float]], data: tuple[Data
             trained_results[0][epoch] = trained_result
             lr_scheduler.step()
 
-            # evaluate on the validation dataset
+            # evaluate on the test dataset
             validation_result = evaluate(
                 model, val_dataloader, device=device)
             eval_results[0][epoch] = validation_result
@@ -345,7 +359,7 @@ def train_final(args, hyperparameters: list[Union[int, float]], data: tuple[Data
         total_time = time.time() - start_time
         print(f"Entire run took {total_time}s")
         
-        save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": data[0], "validation": data[1]})    
+        save_results(save_dir, trained_results, eval_results, args, dataloaders={"train": data[0], "test": data[1]})    
         if model is not None:
             make_graphs_and_vis(save_dir, trained_results, eval_results, val_data, model, device)
         else:
@@ -388,7 +402,7 @@ def parse_args():
     parser.add_argument("--kfold", type=int, default=1)
     parser.add_argument("--save_n_models", type=int, default=SAVE_MODELS_N,
                         help="How many best models to save per fold")
-    parser.add_argument("--train", type=bool, default=True,
+    parser.add_argument("--train", type=bool, default=False,
                         help="Whether this code should be run in training mode or not")
 
     args = parser.parse_args()
@@ -414,12 +428,15 @@ def main():
     labels_dir = args.labels_dir
     channels = args.channels
     num_folds = args.kfold
+    print(args)
 
     if args.train:
+        print("Training mode.")
         (fold_data, test_data) = get_data(
             img_dir=img_dir, labels_dir=labels_dir, channels=channels, num_folds=num_folds)
         train_with_folds(args, hyperparameters, fold_data, channels, num_folds)
     else:
+        print("Testing mode.")
         data = get_final_data(img_dir=img_dir, labels_dir=labels_dir, channels=channels)
         train_final(args, hyperparameters, data, channels, num_folds)
 

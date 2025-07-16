@@ -163,6 +163,7 @@ class PrivetDataset(Dataset):
 
 class PrivetWrappedDataset(Dataset):
     """
+    Wraps a dataset to add a transform to it.
     """
     def __init__(self, dataset: Union[Subset, PrivetDataset], transform: Callable = None):
         self.dataset = dataset
